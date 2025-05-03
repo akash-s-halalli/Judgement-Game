@@ -14,7 +14,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`antialiased bg-background text-foreground`}>
+      {/* Add suppressHydrationWarning to potentially mitigate extension-related hydration errors */}
+      <body className={`antialiased bg-background text-foreground`} suppressHydrationWarning={true}>
         {children}
         <Toaster /> {/* Add Toaster component */}
       </body>
