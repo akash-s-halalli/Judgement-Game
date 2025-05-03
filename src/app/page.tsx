@@ -6,6 +6,7 @@ import { createDeck, dealCards, shuffleDeck } from '@/lib/deck';
 import { PlayerHandComponent } from '@/components/player-hand';
 import { PlayingArea } from '@/components/playing-area';
 import { DeckComponent } from '@/components/deck-component';
+import { CardComponent } from '@/components/card-component'; // Import CardComponent
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card as UICard, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
