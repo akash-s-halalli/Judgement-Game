@@ -1,14 +1,6 @@
-// src/lib/firebase.ts
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-// Optionally import other Firebase services like auth, storage, functions
-// import { getAuth } from "firebase/auth";
-// import { getStorage } from "firebase/storage";
-// import { getFunctions } from "firebase/functions";
 
-// Your web app's Firebase configuration
-// Read values from environment variables
-// IMPORTANT: Ensure these environment variables are set in your `.env.local` file.
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -19,14 +11,11 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
-// Basic check if config variables are loaded
 if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
   console.error("Firebase configuration environment variables are not set. Please check your .env.local file.");
-  // Depending on your needs, you might throw an error or handle this differently.
+  
 }
 
-
-// Initialize Firebase
 let app;
 if (!getApps().length) {
   try {
@@ -34,7 +23,7 @@ if (!getApps().length) {
       app = initializeApp(firebaseConfig);
   } catch (error) {
       console.error("Firebase initialization failed:", error);
-      // Handle initialization error, maybe show a message to the user
+      
   }
 
 } else {
@@ -42,7 +31,7 @@ if (!getApps().length) {
   app = getApp();
 }
 
-let db: any = null; // Initialize db as null
+let db: any = null; 
 if (app) {
     try {
         db = getFirestore(app);
@@ -55,9 +44,4 @@ if (app) {
     console.error("Firebase app not available, cannot initialize Firestore.");
 }
 
-// const auth = getAuth(app); // Example: Initialize Auth
-// const storage = getStorage(app); // Example: Initialize Storage
-// const functions = getFunctions(app); // Example: Initialize Functions
-
-// Export the initialized services you need
-export { db, app }; // Add auth, storage, functions etc. here if you use them
+export { db, app };
