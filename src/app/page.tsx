@@ -390,6 +390,7 @@ export default function GamePage() {
           setCurrentRoomCode(newRoomCode);
           setGameStage('gameLobby');
           setHasCopied(false);
+          setIsCreating(false); // Turn off specific creating spinner
           toast({
               title: "Lobby Created!",
               description: `Room code: ${newRoomCode}`,
@@ -409,11 +410,6 @@ export default function GamePage() {
           setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
           setIsLoading(false); // Stop loading on failure
           setIsCreating(false); // Stop creating spinner
-      } finally {
-           // We don't set isCreating to false here, because the listener will set isLoading to false
-           // which covers the general loading state. isCreating is mainly for the button spinner.
-          // If the try block completes successfully, the listener takes over isLoading.
-          // If the catch block runs, we explicitly set isLoading and isCreating to false.
       }
   };
 
@@ -651,9 +647,34 @@ export default function GamePage() {
     if (!currentRoomCode) return;
 
     try {
+        // Use the navigator.clipboard API which is generally preferred
         if (!navigator.clipboard) {
-             throw new Error("Clipboard API not available");
+            // Fallback for older browsers or insecure contexts
+            const textArea = document.createElement("textarea");
+            textArea.value = currentRoomCode;
+            textArea.style.position = "fixed"; // Prevent scrolling to bottom of page in MS Edge
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                const successful = document.execCommand('copy');
+                if (!successful) throw new Error("Copy command failed");
+                setHasCopied(true);
+                toast({
+                    title: "Copied!",
+                    description: "Room code copied to clipboard.",
+                });
+                 setTimeout(() => setHasCopied(false), 2000);
+            } catch (err) {
+                 console.error('Fallback copy failed:', err);
+                 throw new Error("Fallback copy failed"); // Re-throw to be caught below
+            } finally {
+                document.body.removeChild(textArea);
+            }
+            return;
         }
+
         await navigator.clipboard.writeText(currentRoomCode);
         setHasCopied(true);
         toast({
@@ -664,12 +685,13 @@ export default function GamePage() {
     } catch (err: any) {
         console.error('Failed to copy room code:', err);
         let description = "Could not copy room code automatically. Please copy it manually.";
+        // Check for specific errors related to clipboard permissions/availability
         if (typeof window !== 'undefined' && window.isSecureContext === false) {
             description = "Clipboard access requires a secure connection (HTTPS or localhost). Please copy the code manually.";
         } else if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
             description = "Clipboard access denied by browser settings or policy. Please copy the code manually.";
-        } else if (err.message === "Clipboard API not available") {
-             description = "Clipboard API not available in this browser/context. Please copy the code manually."
+        } else if (err.message === "Clipboard API not available" || err.message === "Fallback copy failed") {
+             description = "Clipboard API not available or fallback failed. Please copy the code manually."
         }
 
         toast({
