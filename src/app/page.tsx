@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { db } from '@/lib/firebase';
 import { collection, doc, setDoc, getDoc, updateDoc, arrayUnion, arrayRemove, onSnapshot, Timestamp, deleteDoc, where, query, getDocs, runTransaction } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
-import { Card, PlayerHand } from '@/types/cards'; // Import card types
+import { Card } from '@/types/cards'; // Import card types
 import { generateDeck, adjustDeckForPlayers, shuffleDeck } from '@/lib/game-logic'; // Import game logic functions
 import CardComponent from '@/components/CardComponent'; // Import CardComponent
 
@@ -42,7 +42,7 @@ interface RoomData {
   createdAt: Timestamp;
   gameStarted?: boolean;
   currentRound?: number;
-  deck?: Card[]; // The current state of the deck
+  deck?: Card[]; // The current state of the deck in the center (usually empty after dealing)
   playerHands?: { [playerId: string]: Card[] }; // Hands dealt to players
   // Add more game state properties later (e.g., current turn, scores, trump suit)
 }
@@ -400,6 +400,10 @@ export default function GamePage() {
           players: [initialPlayerData],
           createdAt: Timestamp.now(),
           gameStarted: false,
+          // Initialize empty playerHands here
+          playerHands: { [playerId]: [] },
+          // Initialize empty deck
+          deck: [],
       };
 
       try {
@@ -479,7 +483,12 @@ export default function GamePage() {
                     throw new Error("Lobby is full");
                  }
                  const updatedPlayers = [...currentRoomData.players, joiningPlayer];
-                 transaction.update(roomRef, { players: updatedPlayers });
+                 // Initialize hand for the new player
+                 const updatedPlayerHands = { ...(currentRoomData.playerHands || {}), [playerId]: [] };
+                 transaction.update(roomRef, {
+                    players: updatedPlayers,
+                    playerHands: updatedPlayerHands
+                 });
                  console.log(`${playerName} (${playerId}) joining lobby ${codeToJoin}. Firestore update scheduled.`);
             } else {
                  console.log(`${playerName} (${playerId}) is already in lobby ${codeToJoin}. No Firestore update needed.`);
@@ -561,10 +570,16 @@ export default function GamePage() {
                     console.log(`Host ${playerNameForLog} (${playerIdToLeave}) leaving, deleting room ${roomCode}.`);
                     transaction.delete(roomRef);
                 } else if (leavingPlayerIndex !== -1) {
-                    // Regular player leaving: Remove from players array
+                    // Regular player leaving: Remove from players array and playerHands
                     const updatedPlayers = players.filter(p => p.id !== playerIdToLeave);
-                    console.log(`${playerNameForLog} (${playerIdToLeave}) leaving room ${roomCode}. Updating players array.`);
-                    transaction.update(roomRef, { players: updatedPlayers });
+                    const updatedPlayerHands = { ...(currentData.playerHands || {}) };
+                    delete updatedPlayerHands[playerIdToLeave]; // Remove hand data
+
+                    console.log(`${playerNameForLog} (${playerIdToLeave}) leaving room ${roomCode}. Updating players array and hands.`);
+                    transaction.update(roomRef, {
+                        players: updatedPlayers,
+                        playerHands: updatedPlayerHands
+                    });
                 } else {
                     // Player not found in the list (already left?)
                     console.log(`${playerNameForLog} (${playerIdToLeave}) was not found in the players list of room ${roomCode}. No backend update needed.`);
@@ -679,6 +694,10 @@ export default function GamePage() {
 
     try {
         // Use Clipboard API - Requires HTTPS or localhost for security
+        // Check if navigator.clipboard is available (might not be in insecure contexts)
+        if (!navigator.clipboard) {
+             throw new Error("Clipboard API not available");
+        }
         await navigator.clipboard.writeText(currentRoomCode);
         setHasCopied(true);
         toast({
@@ -690,12 +709,12 @@ export default function GamePage() {
         console.error('Failed to copy room code:', err);
         let description = "Could not copy room code automatically. Please copy it manually.";
         // Check if running in a secure context (HTTPS or localhost)
-        if (window.isSecureContext === false) {
+        if (typeof window !== 'undefined' && window.isSecureContext === false) {
             description = "Clipboard access requires a secure connection (HTTPS or localhost). Please copy the code manually.";
         } else if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
             description = "Clipboard access denied by browser settings or policy. Please copy the code manually.";
-        } else if (!navigator.clipboard) {
-             description = "Clipboard API not available in this browser. Please copy the code manually."
+        } else if (err.message === "Clipboard API not available") {
+             description = "Clipboard API not available in this browser/context. Please copy the code manually."
         }
 
         toast({
@@ -723,38 +742,54 @@ export default function GamePage() {
            });
            return;
        }
-       // Optional: Add max player limit check if needed (e.g., 4 or 6)
+       // Optional: Add max player limit check if needed (e.g., 4)
        // if (numPlayers > 4) { ... }
 
        setIsLoading(true); // Use general loading indicator
-       setGameMessage("Starting game... Preparing deck...");
+       setGameMessage("Starting game... Preparing deck and dealing cards...");
 
        const roomRef = doc(db, 'rooms', currentRoomCode);
        try {
-           // 1. Generate and Prepare Deck
+           // 1. Generate, Adjust, and Shuffle Deck
            const initialDeck = generateDeck();
            const adjustedDeck = adjustDeckForPlayers(initialDeck, numPlayers);
            const shuffledDeck = shuffleDeck(adjustedDeck);
+           const cardsPerPlayer = shuffledDeck.length / numPlayers;
 
-           // 2. TODO: Deal Cards (Logic to distribute cards will be added later)
-           // For now, just store the prepared deck in Firestore.
-           // We'll deal in the first round logic later.
-           const initialPlayerHands: { [playerId: string]: Card[] } = {};
-            roomData.players.forEach(p => {
-                initialPlayerHands[p.id] = []; // Initialize empty hands
-            });
+           console.log(`Starting game with ${numPlayers} players. Deck size: ${shuffledDeck.length}. Cards per player: ${cardsPerPlayer}`);
 
+           // 2. Deal Cards
+           const dealtHands: { [playerId: string]: Card[] } = {};
+           const playerIds = roomData.players.map(p => p.id); // Get player IDs in current order
+
+           playerIds.forEach(pId => {
+               dealtHands[pId] = []; // Initialize empty hands
+           });
+
+           // Distribute cards one by one (simulating traditional dealing)
+           for (let i = 0; i < shuffledDeck.length; i++) {
+               const playerIndex = i % numPlayers;
+               const currentPlayerId = playerIds[playerIndex];
+               dealtHands[currentPlayerId].push(shuffledDeck[i]);
+           }
+
+           // Verify hand sizes (optional sanity check)
+           Object.values(dealtHands).forEach(hand => {
+                if (hand.length !== cardsPerPlayer) {
+                    console.warn("Warning: Hand size mismatch after dealing.", hand.length, cardsPerPlayer);
+                }
+           });
 
            // 3. Update Firestore with game state
            await updateDoc(roomRef, {
                gameStarted: true,
                currentRound: 1, // Assuming game starts at round 1
-               deck: shuffledDeck, // Store the shuffled, adjusted deck
-               playerHands: initialPlayerHands, // Store empty hands initially
+               deck: [], // Deck is now empty as all cards are dealt
+               playerHands: dealtHands, // Store the dealt hands
                // ... other initial game state like scores, bids, trump etc. ...
            });
 
-           console.log(`Game started flag set, deck prepared and stored in room ${currentRoomCode} by host ${playerName} (${playerId})`);
+           console.log(`Game started, cards dealt, and Firestore updated for room ${currentRoomCode} by host ${playerName} (${playerId})`);
            // Listener will detect gameStarted: true and trigger UI transition.
            // Listener will set isLoading=false
        } catch (error) {
@@ -1077,6 +1112,7 @@ export default function GamePage() {
      const positionStyle = getPlayerPosition(index, numPlayers, currentPlayerIndex);
      const isCurrentUser = player.id === playerId;
      const playerHand = roomData.playerHands ? roomData.playerHands[player.id] : [];
+     const handSize = playerHand?.length ?? 0; // Get hand size
 
      return (
        <div
@@ -1090,27 +1126,26 @@ export default function GamePage() {
          </span>
          {/* Placeholder for cards - Render facedown for opponents, faceup for current player */}
          <div className="flex mt-1 space-x-[-25px] justify-center min-h-[60px] items-center px-1">
-            {playerHand && playerHand.length > 0 ? (
-                playerHand.map((card, cardIndex) => (
-                   <CardComponent
-                       key={`${player.id}-card-${cardIndex}`}
-                       card={isCurrentUser ? card : null} // Show card details only for current user
-                       isFaceDown={!isCurrentUser} // Face down for others
-                       style={{ zIndex: cardIndex }} // Basic overlap effect
-                   />
-                ))
+            {handSize > 0 ? (
+                // For opponents, show face-down cards based on their hand size
+                !isCurrentUser ? (
+                    Array.from({ length: handSize }).map((_, cardIndex) => (
+                       <CardComponent
+                           key={`${player.id}-facedown-${cardIndex}`}
+                           card={null}
+                           isFaceDown={true}
+                           style={{ zIndex: cardIndex }} // Basic overlap effect
+                       />
+                    ))
+                ) : (
+                   // For current user, show face-up cards (this is handled in the bottom bar)
+                   // Show hand size indicator here maybe? Or just leave it for the bottom bar.
+                   <div className="text-xs text-muted-foreground italic mt-1">({handSize} cards)</div> // Or render nothing here
+                )
             ) : (
-                 // Show card backs representing hand size for opponents, or empty state
-                 isCurrentUser ? (
-                     <div className="text-xs text-muted-foreground italic mt-1">Empty Hand</div>
-                 ) : (
-                      // Simulate hand size with face-down cards (using deck size for now as placeholder)
-                      Array.from({ length: roomData.deck ? Math.floor(52 / numPlayers) : 3 }).map((_, i) => ( // Placeholder length
-                          <CardComponent key={`${player.id}-facedown-${i}`} card={null} isFaceDown={true} style={{ zIndex: i }} />
-                      ))
-                 )
+                 // Show empty state if hand size is 0
+                 <div className="text-xs text-muted-foreground italic mt-1">Empty Hand</div>
             )}
-
          </div>
        </div>
      );
@@ -1147,23 +1182,22 @@ export default function GamePage() {
          <div className="relative w-[85vw] h-[70vh] border-4 border-primary/50 rounded-[50%] bg-gradient-radial from-card via-card/80 to-transparent shadow-xl"> {/* Gradient background */}
            {/* Center Area for Deck/Played Cards */}
            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center space-y-2 z-10">
-                {/* Deck pile */}
+                {/* Deck pile - Should be empty after dealing */}
                <div className="relative flex items-center justify-center w-18 h-26">
                    {roomData.deck && roomData.deck.length > 0 ? (
-                       // Show top card face down
-                      <CardComponent card={null} isFaceDown={true} />
+                       // This shouldn't happen if dealing logic is correct
+                       <>
+                         <CardComponent card={null} isFaceDown={true} />
+                         <Badge variant="secondary" className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs">
+                             {roomData.deck.length}
+                         </Badge>
+                       </>
                    ) : (
-                       <div className="w-16 h-24 border-2 border-dashed border-muted-foreground rounded flex items-center justify-center text-muted-foreground text-xs">Deck Empty</div>
-                   )}
-                   {/* Deck count badge */}
-                  {roomData.deck && roomData.deck.length > 0 && (
-                     <Badge variant="secondary" className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs">
-                         {roomData.deck?.length ?? 0}
-                     </Badge>
+                       <div className="w-16 h-24 border-2 border-dashed border-muted-foreground rounded flex items-center justify-center text-muted-foreground text-xs text-center px-1">Deck Empty</div>
                    )}
 
                </div>
-               <span className="text-xs text-muted-foreground mt-1">Deck</span>
+               {/* <span className="text-xs text-muted-foreground mt-1">Deck</span> */}
                {/* TODO: Add area for played cards (trick pile) */}
            </div>
 
@@ -1178,9 +1212,16 @@ export default function GamePage() {
           <span className="text-lg font-bold text-primary mb-2">{playerName} (You)</span>
           <div className="flex space-x-[-35px] justify-center items-end h-[110px]"> {/* Adjust height as needed */}
               {roomData.playerHands && roomData.playerHands[playerId] && roomData.playerHands[playerId].length > 0 ? (
-                  roomData.playerHands[playerId].map((card, index) => (
+                  roomData.playerHands[playerId]
+                     // Sort hand for better display (optional)
+                    .sort((a, b) => {
+                       const suitDiff = (a.suit ? a.suit.localeCompare(b.suit ?? '') : 0) // Sort by suit first
+                       if (suitDiff !== 0) return suitDiff;
+                       return (a.rank ?? '').localeCompare(b.rank ?? ''); // Then by rank
+                    })
+                    .map((card, index) => (
                       <CardComponent
-                         key={`my-card-${index}`}
+                         key={`my-card-${card.suit}-${card.rank}-${index}`} // Use card details for a more stable key
                          card={card}
                          isFaceDown={false}
                          style={{ zIndex: index }}

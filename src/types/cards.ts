@@ -1,8 +1,9 @@
+
 // src/types/cards.ts
 
 /**
  * Represents the four standard playing card suits.
- * Clubs < Hearts < Diamonds < Spades
+ * Order for sorting/comparison (lowest to highest): Clubs < Hearts < Diamonds < Spades
  */
 export enum Suit {
   Clubs = 'C',
@@ -13,7 +14,7 @@ export enum Suit {
 
 /**
  * Represents the standard playing card ranks.
- * 2 is lowest, Ace is highest.
+ * Order for sorting/comparison (lowest to highest): 2 < 3 < ... < King < Ace
  */
 export enum Rank {
   Two = '2',
@@ -24,7 +25,7 @@ export enum Rank {
   Seven = '7',
   Eight = '8',
   Nine = '9',
-  Ten = 'T',
+  Ten = 'T', // T for Ten
   Jack = 'J',
   Queen = 'Q',
   King = 'K',
@@ -40,7 +41,7 @@ export interface Card {
 }
 
 /**
- * Maps suits to their numerical order for sorting.
+ * Maps suits to their numerical order for sorting (lower number = lower suit).
  */
 export const suitOrder: Record<Suit, number> = {
   [Suit.Clubs]: 1,
@@ -50,7 +51,7 @@ export const suitOrder: Record<Suit, number> = {
 };
 
 /**
- * Maps ranks to their numerical order for sorting.
+ * Maps ranks to their numerical value for sorting/comparison (lower number = lower rank).
  */
 export const rankOrder: Record<Rank, number> = {
   [Rank.Two]: 2,
@@ -65,13 +66,20 @@ export const rankOrder: Record<Rank, number> = {
   [Rank.Jack]: 11,
   [Rank.Queen]: 12,
   [Rank.King]: 13,
-  [Rank.Ace]: 14,
+  [Rank.Ace]: 14, // Ace is high
 };
 
 /**
- * Represents a player's hand, containing an array of cards.
+ * Represents a player's hand, mapping player ID to an array of cards.
+ * This structure is used in Firestore.
  */
-export interface PlayerHand {
-  playerId: string;
-  cards: Card[];
+export interface PlayerHands {
+    [playerId: string]: Card[];
 }
+
+// Note: PlayerHand interface was removed as PlayerHands map is more suitable for Firestore structure.
+// If needed locally for specific components, it can be redefined.
+// export interface PlayerHand {
+//   playerId: string;
+//   cards: Card[];
+// }
