@@ -16,6 +16,13 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
+      // Add Firebase Storage domain if you plan to store images there
+      // {
+      //   protocol: 'https',
+      //   hostname: 'firebasestorage.googleapis.com',
+      //   port: '',
+      //   pathname: '/v0/b/YOUR_PROJECT_ID.appspot.com/**', // Replace YOUR_PROJECT_ID
+      // },
     ],
   },
 };
