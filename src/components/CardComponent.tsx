@@ -1,7 +1,7 @@
 
 // src/components/CardComponent.tsx
 import React from 'react';
-import { Card as CardType, Suit, Rank } from '@/types/cards';
+import { Card as CardType, Suit, Rank, suitOrder, rankOrder } from '@/types/cards';
 import { cn } from '@/lib/utils';
 
 interface CardComponentProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -48,14 +48,14 @@ const CardComponent: React.FC<CardComponentProps> = ({ card, isFaceDown = false,
         className={cn(
           'w-16 h-24 bg-secondary rounded-md shadow-md border border-border flex items-center justify-center', // Basic dimensions and style
           'bg-gradient-to-br from-secondary via-accent/50 to-secondary', // Subtle gradient
-          className
+          className // Allow overriding size, e.g., 'w-12 h-18'
         )}
         style={style}
         aria-hidden="true" // Hide from screen readers
         {...props}
       >
          {/* Optional: Add a subtle pattern or logo */}
-         <div className="w-full h-full border-2 border-primary/30 rounded-md pattern-dots pattern-primary/20 pattern-bg-secondary pattern-size-4 pattern-opacity-50"></div>
+         <div className="w-full h-full border border-primary/30 rounded-md pattern-dots pattern-primary/20 pattern-bg-secondary pattern-size-4 pattern-opacity-50"></div>
       </div>
     );
   }
@@ -71,28 +71,28 @@ const CardComponent: React.FC<CardComponentProps> = ({ card, isFaceDown = false,
       className={cn(
         'w-16 h-24 bg-card rounded-md shadow-lg border border-border p-1 flex flex-col justify-between relative text-sm font-semibold',
         colorClass, // Apply suit color
-        className
+        className // Allow overriding size
       )}
        style={style}
-      aria-label={`${rankText} of ${Suit[suit]}`} // Accessibility label
+      aria-label={`${rankText} of ${Object.keys(Suit).find(key => Suit[key as keyof typeof Suit] === suit)}`} // Accessibility label improved
       {...props}
     >
       {/* Top left rank and suit */}
-      <div className="flex flex-col items-start h-4">
-        <span className="leading-none">{rankText}</span>
-        <span className="leading-none">{symbol}</span>
+      <div className="flex flex-col items-start leading-none"> {/* Simplified structure */}
+        <span>{rankText}</span>
+        <span>{symbol}</span>
       </div>
 
-       {/* Center Suit Symbol (Larger) */}
-       <div className="absolute inset-0 flex items-center justify-center">
-            <span className={cn("text-4xl opacity-80", colorClass)}>{symbol}</span>
+       {/* Center Suit Symbol (Larger) - adjusted size */}
+       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className={cn("text-3xl opacity-80", colorClass)}>{symbol}</span>
        </div>
 
 
       {/* Bottom right rank and suit (rotated) */}
-      <div className="flex flex-col items-end h-4 transform rotate-180">
-        <span className="leading-none">{rankText}</span>
-        <span className="leading-none">{symbol}</span>
+      <div className="flex flex-col items-end leading-none transform rotate-180"> {/* Simplified structure */}
+        <span>{rankText}</span>
+        <span>{symbol}</span>
       </div>
     </div>
   );
