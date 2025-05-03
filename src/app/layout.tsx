@@ -13,9 +13,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // Apply dark mode globally via className
+    // No need for suppressHydrationWarning if underlying issues are fixed
     <html lang="en" className="dark">
-      {/* Add suppressHydrationWarning to potentially mitigate extension-related hydration errors */}
-      <body className={`antialiased bg-background text-foreground`} suppressHydrationWarning={true}>
+      <body className={`antialiased bg-background text-foreground`}>
         {children}
         <Toaster /> {/* Add Toaster component */}
       </body>

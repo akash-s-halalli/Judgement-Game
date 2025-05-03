@@ -11,13 +11,15 @@ import { getFirestore } from "firebase/firestore";
 // These should ideally be stored in environment variables for security.
 // Ensure environment variables used on the client-side start with NEXT_PUBLIC_.
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "YOUR_API_KEY", // Replace with actual or env var
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "YOUR_AUTH_DOMAIN.firebaseapp.com", // Replace with actual or env var
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID", // Replace with actual or env var
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "YOUR_STORAGE_BUCKET.appspot.com", // Replace with actual or env var
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "YOUR_MESSAGING_SENDER_ID", // Replace with actual or env var
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "YOUR_APP_ID" // Replace with actual or env var
+  apiKey: "AIzaSyAY4ewLJFzN7qZqzJDH3RtR8GAZYZIBWZA",
+  authDomain: "judgement-89152.firebaseapp.com",
+  projectId: "judgement-89152",
+  storageBucket: "judgement-89152.firebasestorage.app",
+  messagingSenderId: "788488672170",
+  appId: "1:788488672170:web:ec3cd8dd558dd6d2aa11d3",
+  measurementId: "G-HBYXE6J0BQ"
 };
+
 
 // Initialize Firebase
 let app;
@@ -30,6 +32,7 @@ if (!getApps().length) {
 }
 
 const db = getFirestore(app);
+console.log("Firestore initialized successfully.");
 // const auth = getAuth(app); // Example: Initialize Auth
 // const storage = getStorage(app); // Example: Initialize Storage
 // const functions = getFunctions(app); // Example: Initialize Functions
