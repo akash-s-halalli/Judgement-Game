@@ -10,6 +10,7 @@ interface CardComponentProps {
   className?: string;
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent<HTMLDivElement>, card: Card) => void;
+  onDragEnd?: () => void; // Add onDragEnd prop
 }
 
 const suitSymbols = {
@@ -27,7 +28,7 @@ const suitColors = {
 };
 
 
-export function CardComponent({ card, isFaceDown = false, className, draggable = false, onDragStart }: CardComponentProps) {
+export function CardComponent({ card, isFaceDown = false, className, draggable = false, onDragStart, onDragEnd }: CardComponentProps) {
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     if (draggable && card && onDragStart) {
       onDragStart(e, card);
@@ -60,6 +61,7 @@ export function CardComponent({ card, isFaceDown = false, className, draggable =
       className={cn(baseClasses, className)}
       draggable={draggable}
       onDragStart={handleDragStart}
+      onDragEnd={onDragEnd} // Attach onDragEnd handler
     >
       <div className={`text-left text-xl font-bold ${suitColor}`}>
         <div>{card.rank}</div>

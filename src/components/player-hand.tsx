@@ -13,6 +13,7 @@ interface PlayerHandProps {
   onCardPlay: (card: Card) => void; // Callback when a card is dragged/played
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void; // Add drag end handler
 }
 
 export function PlayerHandComponent({
@@ -23,6 +24,7 @@ export function PlayerHandComponent({
   onCardPlay,
   onDragOver,
   onDrop,
+  onDragEnd, // Receive drag end handler
 }: PlayerHandProps) {
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, card: Card) => {
@@ -53,6 +55,7 @@ export function PlayerHandComponent({
           card={card}
           draggable={isCurrentPlayer && isTurn}
           onDragStart={(e) => handleDragStart(e, card)}
+          onDragEnd={onDragEnd} // Pass drag end handler down
           className={cn(
              "relative transition-transform duration-200 ease-out",
              isCurrentPlayer && isTurn ? "hover:-translate-y-4 hover:z-10" : "cursor-not-allowed", // Lift card on hover if draggable

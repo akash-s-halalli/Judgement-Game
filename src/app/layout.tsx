@@ -3,7 +3,7 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster"; // Import Toaster
 
 export const metadata: Metadata = {
-  title: 'Distance Duel', // Updated title
+  title: 'Judgement', // Updated title
   description: 'A virtual card game for remote friends.', // Updated description
 };
 
