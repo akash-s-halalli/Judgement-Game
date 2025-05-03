@@ -1,4 +1,6 @@
+
 import type { Config } from "tailwindcss";
+import plugin from 'tailwindcss/plugin'; // Import plugin function
 
 export default {
     darkMode: ["class"],
@@ -87,8 +89,27 @@ export default {
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out'
-  		}
+  		},
+      backgroundImage: { // Add backgroundImage extension
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+      }
   	}
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [
+      require("tailwindcss-animate"),
+      require('tailwindcss-patterns'), // Add the patterns plugin
+      // Add a custom plugin for radial gradients if needed, or rely on utility class generation
+      plugin(function({ addUtilities }) {
+          addUtilities({
+              '.bg-gradient-radial': {
+                  'background-image': 'radial-gradient(ellipse at center, var(--tw-gradient-stops))',
+              },
+              '.bg-gradient-radial-at-t': {
+                  'background-image': 'radial-gradient(ellipse at top, var(--tw-gradient-stops))',
+              },
+              // Add more variations as needed
+          })
+      })
+  ],
 } satisfies Config;
+
