@@ -22,8 +22,10 @@ import { useToast } from "@/hooks/use-toast";
 import { db } from '@/lib/firebase';
 import { collection, doc, setDoc, getDoc, updateDoc, arrayUnion, arrayRemove, onSnapshot, Timestamp, deleteDoc, where, query, getDocs, runTransaction } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
+import { Card, PlayerHand } from '@/types/cards'; // Import card types
+import { generateDeck, adjustDeckForPlayers, shuffleDeck } from '@/lib/game-logic'; // Import game logic functions
 
-// Game stages: 'enterName' -> 'lobby' -> 'gameLobby' -> 'game' (future)
+// Game stages: 'enterName' -> 'lobby' -> 'gameLobby' -> 'game'
 type GameStage = 'enterName' | 'lobby' | 'gameLobby' | 'game';
 
 interface Player {
@@ -38,7 +40,9 @@ interface RoomData {
   createdAt: Timestamp;
   gameStarted?: boolean;
   currentRound?: number;
-  // Add more game state properties later
+  deck?: Card[]; // The current state of the deck
+  playerHands?: { [playerId: string]: Card[] }; // Hands dealt to players
+  // Add more game state properties later (e.g., current turn, scores, trump suit)
 }
 
 // LocalStorage keys
@@ -474,6 +478,10 @@ export default function GamePage() {
             const playerIndex = currentRoomData.players.findIndex(p => p.id === playerId);
 
             if (playerIndex === -1) {
+                 // Check max players (optional, e.g., 4)
+                 if (currentRoomData.players.length >= 4) {
+                    throw new Error("Lobby is full");
+                 }
                  const updatedPlayers = [...currentRoomData.players, joiningPlayer];
                  transaction.update(roomRef, { players: updatedPlayers });
                  console.log(`${playerName} (${playerId}) joining lobby ${codeToJoin}. Firestore update scheduled.`);
@@ -499,6 +507,8 @@ export default function GamePage() {
           description = `Lobby ${codeToJoin} not found. Check the code and try again.`;
       } else if (error.message === "Game already started") {
           description = `Cannot join lobby ${codeToJoin}, the game has already started.`;
+      } else if (error.message === "Lobby is full") {
+          description = `Lobby ${codeToJoin} is full. Cannot join.`;
       }
       toast({
         title: "Join Failed",
@@ -631,7 +641,10 @@ export default function GamePage() {
     } catch (err: any) {
         console.error('Failed to copy room code:', err);
         let description = "Could not copy room code automatically. Please copy it manually.";
-        if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+        // Check if running in a secure context (HTTPS or localhost)
+        if (window.isSecureContext === false) {
+            description = "Clipboard access requires a secure connection (HTTPS or localhost). Please copy the code manually.";
+        } else if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
             description = "Clipboard access denied by browser settings or policy. Please copy the code manually.";
         } else if (!navigator.clipboard) {
              description = "Clipboard API not available in this browser. Please copy the code manually."
@@ -647,13 +660,14 @@ export default function GamePage() {
 }, [currentRoomCode, toast]);
 
 
-  // --- Game Logic Placeholders ---
+  // --- Game Logic ---
   const handleStartGame = async () => {
        if (!currentRoomCode || !roomData || !playerId || roomData.hostId !== playerId) {
            toast({ title:"Action Denied", description: "Only the host can start the game.", variant: "destructive"});
            return;
        }
-       if (roomData.players.length < 2) {
+       const numPlayers = roomData.players.length;
+       if (numPlayers < 2) {
            toast({
                title: "Cannot Start Game",
                description: "Need at least 2 players to start.",
@@ -661,21 +675,40 @@ export default function GamePage() {
            });
            return;
        }
+       // Optional: Add max player limit check if needed (e.g., 4 or 6)
+       // if (numPlayers > 4) { ... }
 
        setIsLoading(true);
-       setGameMessage("Starting game...");
+       setGameMessage("Starting game... Preparing deck...");
 
        const roomRef = doc(db, 'rooms', currentRoomCode);
        try {
-           // TODO: Game Initialization Logic (shuffle, deal, set round, etc.)
+           // 1. Generate and Prepare Deck
+           const initialDeck = generateDeck();
+           const adjustedDeck = adjustDeckForPlayers(initialDeck, numPlayers);
+           const shuffledDeck = shuffleDeck(adjustedDeck);
+
+           // 2. TODO: Deal Cards (Logic to distribute cards will be added later)
+           // For now, just store the prepared deck in Firestore.
+           // We'll deal in the first round logic later.
+           const initialPlayerHands: { [playerId: string]: Card[] } = {};
+            roomData.players.forEach(p => {
+                initialPlayerHands[p.id] = []; // Initialize empty hands
+            });
+
+
+           // 3. Update Firestore with game state
            await updateDoc(roomRef, {
                gameStarted: true,
-               currentRound: 1,
-               // ... other initial game state ...
+               currentRound: 1, // Assuming game starts at round 1
+               deck: shuffledDeck, // Store the shuffled, adjusted deck
+               playerHands: initialPlayerHands, // Store empty hands initially
+               // ... other initial game state like scores, bids, trump etc. ...
            });
 
-           console.log(`Game started flag set in room ${currentRoomCode} by host ${playerName} (${playerId})`);
+           console.log(`Game started flag set, deck prepared and stored in room ${currentRoomCode} by host ${playerName} (${playerId})`);
            // Listener will detect gameStarted: true and trigger UI transition.
+           // setIsLoading(false); // Listener will handle this
        } catch (error) {
            console.error("Error starting game:", error);
            toast({
@@ -733,8 +766,8 @@ export default function GamePage() {
   // --- Render Logic ---
   const isActionLoading = isCreating || isJoining || isLeaving || isLoading;
 
-  // Initial loading screen while restoring state
-   if (!isLoadedFromStorage && typeof window !== 'undefined') {
+  // Initial loading screen while restoring state or if hydration warning suppression is needed
+   if (!isLoadedFromStorage || typeof window === 'undefined') { // Added check for window object
      return (
        <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
          <Loader2 className="h-16 w-16 animate-spin text-primary" />
@@ -878,7 +911,7 @@ export default function GamePage() {
         </CardHeader>
         <CardContent className="flex flex-col space-y-6">
           <div>
-            <h3 className="text-xl font-semibold text-secondary mb-3 text-center">Players ({roomData?.players?.length ?? 0})</h3>
+            <h3 className="text-xl font-semibold text-secondary mb-3 text-center">Players ({roomData?.players?.length ?? 0} / 4)</h3> {/* Assuming max 4 */}
             <div className="max-h-60 overflow-y-auto px-2 border rounded-md bg-muted/20 py-2">
               <ul className="space-y-2 text-center">
                 {/* Show loading indicator inside list ONLY when loading AND no data */}
@@ -915,7 +948,7 @@ export default function GamePage() {
                 onClick={handleStartGame}
               >
                 {/* Show loading specific to starting game OR general loading */}
-                {(isLoading && gameMessage === "Starting game...") ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Swords className="mr-2"/>}
+                {(isLoading && gameMessage.startsWith("Starting game...")) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Swords className="mr-2"/>}
                 Start Game
               </Button>
             )}
@@ -935,41 +968,127 @@ export default function GamePage() {
     </div>
   );
 
-   // Placeholder for the actual game view
-   const renderGame = () => (
-     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
-        <UICard className="w-full max-w-4xl shadow-2xl">
-          <CardHeader>
-             <CardTitle className="text-3xl font-bold text-primary text-center">Game In Progress - Room: {currentRoomCode}</CardTitle>
-             <UICardDescription className="text-center text-muted-foreground pt-2">
-                Players: {roomData?.players?.map(p => p.name).join(', ') ?? 'Loading...'}
-             </UICardDescription>
-          </CardHeader>
-          <CardContent>
-             <p className="text-center p-8 text-lg">Game content placeholder...</p>
-             <p className="text-center text-muted-foreground">Current Round: {roomData?.currentRound ?? 'N/A'}</p>
-             <div className="flex justify-center mt-4 space-x-4">
-                {playerId && roomData?.hostId === playerId && (
-                     <Button variant="destructive" onClick={() => alert("End game logic needed")} disabled={isLoading}>
-                         {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                         End Game (Host)
-                     </Button>
-                )}
-                 <Button variant="outline" onClick={() => alert("Leave game logic needed - Careful!")} disabled={isLoading}>
-                     {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                     Leave Game
-                 </Button>
-             </div>
-          </CardContent>
-        </UICard>
+  // --- Game View ---
+ const renderGame = () => {
+   if (!roomData || !playerId || !playerName) return null; // Should be handled by the switch, but safe check
+
+   const numPlayers = roomData.players.length;
+   const currentPlayerIndex = roomData.players.findIndex(p => p.id === playerId);
+   if (currentPlayerIndex === -1) return null; // Should also be handled earlier
+
+   const getPlayerPosition = (index: number, totalPlayers: number, currentIndex: number) => {
+       const positionIndex = (index - currentIndex + totalPlayers) % totalPlayers;
+       const angleIncrement = 360 / totalPlayers;
+       let angle = 180 - (positionIndex * angleIncrement); // Start from bottom (180 deg) and go counter-clockwise
+
+       // Adjust angle slightly for better layout near top/bottom if needed
+       if (totalPlayers > 2) {
+            if (positionIndex === 0) angle = 180; // Current player always at bottom center
+            else if (positionIndex === Math.floor(totalPlayers / 2) && totalPlayers % 2 === 0) angle = 0; // Player opposite at top center (for even players)
+            else if (positionIndex === Math.ceil(totalPlayers / 2) && totalPlayers > 2) angle = 0; // Top player for odd > 2
+       } else if (totalPlayers === 2) {
+           if (positionIndex === 0) angle = 180; // Bottom
+           if (positionIndex === 1) angle = 0;   // Top
+       }
+
+
+       // Convert angle to radians for trig functions
+       const angleRad = angle * (Math.PI / 180);
+
+       // Calculate position based on ellipse (adjust rx, ry for desired shape)
+       const rx = 40; // Horizontal radius percentage
+       const ry = 30; // Vertical radius percentage
+       const x = 50 + rx * Math.cos(angleRad); // Center X + radius * cos(angle)
+       const y = 50 + ry * Math.sin(angleRad); // Center Y + radius * sin(angle)
+
+       return {
+           left: `${x}%`,
+           top: `${y}%`,
+           transform: `translate(-50%, -50%)`, // Center the element
+       };
+   };
+
+   const renderPlayerSeat = (player: Player, index: number) => {
+     const positionStyle = getPlayerPosition(index, numPlayers, currentPlayerIndex);
+     const isCurrentUser = player.id === playerId;
+
+     return (
+       <div
+         key={player.id}
+         className={`absolute p-2 rounded-lg shadow-md flex flex-col items-center ${isCurrentUser ? 'bg-primary/20 border-2 border-primary' : 'bg-card'}`}
+         style={positionStyle}
+       >
+         <span className={`font-semibold ${isCurrentUser ? 'text-primary-foreground' : 'text-card-foreground'}`}>{player.name} {isCurrentUser ? '(You)' : ''}</span>
+         {/* Placeholder for cards - will add later */}
+         <div className="flex mt-1 space-x-[-10px]">
+             {/* Render facedown cards for opponents, faceup for current player */}
+             {/* Example: Map over player.hand if available */}
+             <div className="w-8 h-12 bg-muted rounded border border-border flex items-center justify-center text-xs">?</div>
+             <div className="w-8 h-12 bg-muted rounded border border-border flex items-center justify-center text-xs">?</div>
+             {/* ... */}
+         </div>
+       </div>
+     );
+   };
+
+   return (
+     <div className="flex flex-col h-screen bg-gradient-to-br from-background to-card p-4 relative overflow-hidden">
+       {/* Game Info Header */}
+       <div className="absolute top-2 left-2 right-2 flex justify-between items-center z-10 p-2 bg-card/80 rounded-lg shadow">
+           <Badge variant="secondary">Room: {currentRoomCode}</Badge>
+           <div className="text-center">
+               <h2 className="text-xl font-bold text-primary">Judgement</h2>
+               <p className="text-sm text-muted-foreground">Round {roomData.currentRound ?? 'N/A'}</p>
+               {/* Add more info: Trump, Bids, Scores */}
+           </div>
+           <div className="space-x-2">
+             {/* Add buttons later: Leave Game, Settings? */}
+             <Button variant="outline" size="sm" onClick={() => alert("Leave game logic needed - Careful!")} disabled={isLoading}>
+                  {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Leave Game
+              </Button>
+             {playerId === roomData.hostId && (
+                  <Button variant="destructive" size="sm" onClick={() => alert("End game logic needed")} disabled={isLoading}>
+                      {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      End Game (Host)
+                  </Button>
+             )}
+           </div>
+       </div>
+
+       {/* Game Table Area */}
+       <div className="flex-grow flex items-center justify-center mt-[70px] mb-[60px]"> {/* Adjust margins for header/footer */}
+         <div className="relative w-[85vw] h-[70vh] border-4 border-primary/50 rounded-[50%] bg-card/50 shadow-xl">
+           {/* Center Area for Deck/Played Cards */}
+           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center space-y-2">
+               <div className="w-16 h-24 bg-red-900 rounded border-2 border-border shadow-md flex items-center justify-center text-background font-bold text-lg">
+                 {/* Card back design or count */}
+                 {roomData.deck?.length ?? '?'}
+               </div>
+               <span className="text-xs text-muted-foreground">Deck</span>
+               {/* Add area for played cards */}
+           </div>
+
+           {/* Player Seats */}
+           {roomData.players.map((player, index) => renderPlayerSeat(player, index))}
+
+         </div>
+       </div>
+
+       {/* Current Player Name Footer */}
+       <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 text-center p-2 bg-card/80 rounded-lg shadow">
+         <span className="text-lg font-bold text-primary">{playerName} (You)</span>
+         {/* Area for player's hand will go here */}
+       </div>
      </div>
    );
+ };
 
 
   // --- Stage Switching Logic ---
 
   // Handle initial state before hydration / storage load is complete
-   if (!isLoadedFromStorage) {
+   if (!isLoadedFromStorage || typeof window === 'undefined') { // Added window check
      return (
        <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
          <Loader2 className="h-16 w-16 animate-spin text-primary" />
