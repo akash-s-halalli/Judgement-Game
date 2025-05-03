@@ -5,6 +5,9 @@ import { Toaster } from '@/components/ui/toaster'; // Import Toaster
 export const metadata: Metadata = {
   title: 'Judgement', // Updated title
   description: 'A virtual card game for remote friends.', // Updated description
+  icons: { // Add favicon information
+    icon: '/favicon.ico',
+  }
 };
 
 export default function RootLayout({
@@ -13,8 +16,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    // Apply dark mode globally via className
-    // Add suppressHydrationWarning to <html> to mitigate errors from browser extensions
+    // Add suppressHydrationWarning to the <html> tag
+    // This helps ignore hydration mismatches often caused by browser extensions
     <html lang="en" className="dark" suppressHydrationWarning={true}>
       <body className={`antialiased bg-background text-foreground`}>
         {children}

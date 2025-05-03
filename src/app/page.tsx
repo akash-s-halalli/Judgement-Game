@@ -101,16 +101,15 @@ export default function GamePage() {
       const savedGameStage = localStorage.getItem(LS_GAME_STAGE) as GameStage | null;
       const savedRoomCode = localStorage.getItem(LS_CURRENT_ROOM_CODE);
 
-      if (savedPlayerId) {
-        setPlayerId(savedPlayerId);
-        console.log("Restored playerId:", savedPlayerId);
-      } else {
-        // Generate a new player ID if none exists
-        const newPlayerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        setPlayerId(newPlayerId);
-        localStorage.setItem(LS_PLAYER_ID, newPlayerId);
-        console.log("Generated new playerId:", newPlayerId);
+      let activePlayerId = savedPlayerId;
+      if (!activePlayerId) {
+        activePlayerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        localStorage.setItem(LS_PLAYER_ID, activePlayerId);
+        console.log("Generated new playerId:", activePlayerId);
       }
+      setPlayerId(activePlayerId);
+      if(savedPlayerId) console.log("Restored playerId:", activePlayerId);
+
 
       if (savedPlayerName) {
         setPlayerName(savedPlayerName);
@@ -118,69 +117,62 @@ export default function GamePage() {
         console.log("Restored playerName:", savedPlayerName);
       }
 
-      if (savedGameStage) {
-        // Basic validation - ensure the stage makes sense with other data
-        if (savedGameStage === 'gameLobby' || savedGameStage === 'game') {
-            if (savedPlayerName && savedPlayerId && savedRoomCode) {
-                 setGameStage(savedGameStage);
-                 setCurrentRoomCode(savedRoomCode);
-                 console.log("Restored gameStage:", savedGameStage, "and roomCode:", savedRoomCode);
-            } else {
-                // Inconsistent state, reset to lobby or enterName
-                console.warn("Inconsistent state found in localStorage, resetting to 'lobby'.");
-                setGameStage(savedPlayerName ? 'lobby' : 'enterName'); // Go to lobby if name exists, else enterName
-                localStorage.setItem(LS_GAME_STAGE, savedPlayerName ? 'lobby' : 'enterName');
-                localStorage.removeItem(LS_CURRENT_ROOM_CODE);
-                setCurrentRoomCode(null); // Ensure room code is cleared
-            }
-        } else if (savedGameStage === 'lobby') {
-             if (savedPlayerName && savedPlayerId) {
-                setGameStage('lobby');
-                console.log("Restored gameStage: lobby");
-             } else {
-                 console.warn("Inconsistent state for 'lobby', resetting to 'enterName'.");
-                 setGameStage('enterName');
-                 localStorage.setItem(LS_GAME_STAGE, 'enterName');
-             }
-        } else { // enterName
-            // If name exists but stage is 'enterName', move to 'lobby'
-            if (savedPlayerName && savedPlayerId) {
-                console.warn("Restored 'enterName' stage but playerName exists, moving to 'lobby'.");
-                setGameStage('lobby');
-                localStorage.setItem(LS_GAME_STAGE, 'lobby');
-            } else {
-                setGameStage('enterName');
-                console.log("Restored gameStage: enterName");
-            }
-        }
+      let currentStage: GameStage = 'enterName'; // Default stage
 
+      if (savedGameStage) {
+         // Stage-specific restoration logic
+         if ((savedGameStage === 'gameLobby' || savedGameStage === 'game') && savedPlayerName && activePlayerId && savedRoomCode) {
+              currentStage = savedGameStage;
+              setCurrentRoomCode(savedRoomCode);
+              console.log("Restoring stage:", currentStage, "and roomCode:", savedRoomCode);
+         } else if (savedGameStage === 'lobby' && savedPlayerName && activePlayerId) {
+              currentStage = 'lobby';
+              console.log("Restoring stage: lobby");
+         } else if (savedGameStage === 'enterName') {
+              if (savedPlayerName && activePlayerId) {
+                  // Has name but stuck on enterName? Move to lobby.
+                  currentStage = 'lobby';
+                  console.warn("Restored 'enterName' stage but playerName exists, moving to 'lobby'.");
+                  localStorage.setItem(LS_GAME_STAGE, 'lobby'); // Correct storage
+              } else {
+                  currentStage = 'enterName';
+                  console.log("Restoring stage: enterName");
+              }
+         } else {
+             // Fallback if saved stage is invalid or inconsistent with other data
+              currentStage = savedPlayerName ? 'lobby' : 'enterName';
+              console.warn("Inconsistent state found in localStorage, resetting to stage:", currentStage);
+              localStorage.setItem(LS_GAME_STAGE, currentStage);
+              localStorage.removeItem(LS_CURRENT_ROOM_CODE); // Clean up room code if state is inconsistent
+              setCurrentRoomCode(null);
+         }
       } else {
-         // Default to enterName if no stage saved, unless name already exists
-         const defaultStage = (savedPlayerName && savedPlayerId) ? 'lobby' : 'enterName';
-         setGameStage(defaultStage);
-         localStorage.setItem(LS_GAME_STAGE, defaultStage);
-         console.log(`No gameStage found, defaulting to ${defaultStage}.`);
+          // No stage saved, determine based on whether name exists
+          currentStage = savedPlayerName ? 'lobby' : 'enterName';
+          localStorage.setItem(LS_GAME_STAGE, currentStage);
+          console.log(`No gameStage found, defaulting to ${currentStage}.`);
       }
 
-      // Set messages based on restored state (after stage is set)
-      if (gameStage === 'lobby' && playerName) { // Use the actual state variables now
-          setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
-      } else if ((gameStage === 'gameLobby' || gameStage === 'game') && currentRoomCode) {
-          // Message will be updated by the Firestore listener shortly
-          setGameMessage(`Reconnecting to ${gameStage === 'gameLobby' ? 'lobby' : 'game'} ${currentRoomCode}...`);
+      setGameStage(currentStage); // Set the determined stage
+
+
+      // Set messages based on restored state
+      if (currentStage === 'lobby' && savedPlayerName) {
+          setGameMessage(`Welcome back, ${savedPlayerName}! Create or join a game.`);
+      } else if ((currentStage === 'gameLobby' || currentStage === 'game') && savedRoomCode) {
+          setGameMessage(`Reconnecting to ${currentStage === 'gameLobby' ? 'lobby' : 'game'} ${savedRoomCode}...`);
       } else {
           setGameMessage('Enter your name to start.');
       }
 
-      setIsLoadedFromStorage(true); // Indicate loading from storage is complete
-      setIsLoading(false); // Stop initial loading indicator
+      setIsLoadedFromStorage(true);
+      setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array ensures this runs once on mount
 
   // --- State Persistence to localStorage ---
   useEffect(() => {
-    // Persist playerName only when it's confirmed (not temp)
     if (isLoadedFromStorage && typeof window !== 'undefined') {
         console.log("Persisting playerName to localStorage:", playerName);
         if (playerName) {
@@ -192,7 +184,6 @@ export default function GamePage() {
   }, [playerName, isLoadedFromStorage]);
 
   useEffect(() => {
-    // Player ID is set once initially and persisted, shouldn't change often
     if (isLoadedFromStorage && typeof window !== 'undefined' && playerId) {
        console.log("Persisting playerId to localStorage:", playerId);
        localStorage.setItem(LS_PLAYER_ID, playerId);
@@ -221,7 +212,6 @@ export default function GamePage() {
 
   // --- Firestore Listener Effect ---
   useEffect(() => {
-    // Wait until loaded from storage and necessary IDs are available
     if (!isLoadedFromStorage || !playerId) {
         console.log("Firestore listener waiting for storage load or playerId.");
         return;
@@ -235,11 +225,9 @@ export default function GamePage() {
         }
     };
 
-    cleanupListener(); // Clean up previous listener before setting a new one
+    cleanupListener();
 
     if ((gameStage === 'gameLobby' || gameStage === 'game') && currentRoomCode) {
-      // Show loading only if we don't have roomData yet for this room
-      // Avoid setting isLoading(true) if we already have data, prevents flicker on quick updates
       if (!roomData || roomData.players.length === 0) setIsLoading(true);
       console.log(`Attaching Firestore listener for room: ${currentRoomCode}`);
       const roomRef = doc(db, 'rooms', currentRoomCode);
@@ -247,63 +235,54 @@ export default function GamePage() {
       unsubscribeRef.current = onSnapshot(roomRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data() as RoomData;
-          setRoomData(data); // Update local room data state
+          setRoomData(data);
           console.log("Received room update:", data);
 
-          // --- State Synchronization & Message Updates ---
           const currentPlayerInRoom = data.players.some(p => p.id === playerId);
 
           if (!currentPlayerInRoom && (gameStage === 'gameLobby' || gameStage === 'game')) {
-               // Current player is no longer in this room (e.g., kicked, left on another device, game ended)
                console.warn(`Player ${playerId} no longer in room ${currentRoomCode}. Redirecting to lobby.`);
                toast({ title: "Removed from Room", description: `You are no longer in room ${currentRoomCode}.`, variant: "destructive" });
-               resetToLobby(`Welcome back, ${playerName}! Create or join a game.`); // Ensure message is set
+               resetToLobby(`Welcome back, ${playerName}! Create or join a game.`);
                setIsLoading(false); // Ensure loading is off
-               cleanupListener(); // Detach listener after resetting state
-               return; // Stop further processing for this snapshot
+               cleanupListener();
+               return;
           }
 
-          // Handle transitions based on gameStarted flag
           if (data.gameStarted && gameStage === 'gameLobby') {
               console.log(`Game started detected in room ${currentRoomCode}. Transitioning to 'game' stage.`);
-              setGameStage('game'); // This will persist via useEffect
+              setGameStage('game');
               setGameMessage(`Game in progress in room ${currentRoomCode}! Round ${data.currentRound || 'N/A'}`);
           } else if (!data.gameStarted && gameStage === 'game') {
-              // Game ended or reset while we were in 'game' stage
               console.log(`Game no longer marked as started in room ${currentRoomCode}. Returning to 'gameLobby'.`);
               toast({ title: "Game Ended", description: `The game in room ${currentRoomCode} has ended. Returning to lobby.` });
-              setGameStage('gameLobby'); // Move back to lobby
-              // Message will be updated below based on host status
+              setGameStage('gameLobby');
           }
 
-           // Update messages based on the current (potentially changed) stage
-           if (gameStage === 'gameLobby') { // Update lobby message if still in lobby
+           if (gameStage === 'gameLobby') {
                if (playerId === data.hostId) {
                    setGameMessage(`Share code ${currentRoomCode} to invite players! Waiting for players...`);
                } else {
                    setGameMessage(`Joined lobby ${currentRoomCode}. Waiting for host "${data.hostName}" to start...`);
                }
-           } else if (gameStage === 'game') { // Update game message
+           } else if (gameStage === 'game') {
                 setGameMessage(`Game in progress! Round ${data.currentRound || 'N/A'}`);
-                // Add more game-specific messages later (e.g., whose turn)
            }
 
 
         } else {
-          // Room deleted or doesn't exist anymore
           console.log(`Room ${currentRoomCode} not found or deleted.`);
-          // Only show toast and reset if we were actively supposed to be in that room
           if (gameStage === 'gameLobby' || gameStage === 'game') {
               toast({
                 title: "Room Closed",
                 description: `Room ${currentRoomCode} is no longer available.`,
                 variant: "destructive",
               });
-              resetToLobby(`Welcome back, ${playerName}! Create a game or join one.`); // Reset state and provide message
-              cleanupListener(); // Detach listener after resetting state
+              resetToLobby(`Welcome back, ${playerName}! Create a game or join one.`);
+              cleanupListener();
           }
         }
-         setIsLoading(false); // Stop loading after data is fetched/updated or determined non-existent
+         setIsLoading(false);
       }, (error) => {
         console.error("Error listening to room changes:", error);
         toast({
@@ -311,36 +290,32 @@ export default function GamePage() {
           description: "Could not sync room data. Please check your connection.",
           variant: "destructive",
         });
-        // Attempt to reset to a safe state
         if (gameStage === 'gameLobby' || gameStage === 'game') {
-             resetToLobby(`Welcome back, ${playerName}! Error connecting to room.`); // Reset state and provide message
-             cleanupListener(); // Detach listener after resetting state
+             resetToLobby(`Welcome back, ${playerName}! Error connecting to room.`);
+             cleanupListener();
         }
-        setIsLoading(false);
+        setIsLoading(false); // Ensure loading is off on error
+        setIsCreating(false); // Reset specific loading flags on error
+        setIsJoining(false);
       });
 
     } else {
-        // Not in gameLobby or game stage, ensure loading is off
         setIsLoading(false);
-        // Cleanup listener if it exists for some reason
         cleanupListener();
     }
 
-    // Cleanup: Ensure listener is removed when dependencies change or component unmounts.
     return cleanupListener;
-    // Dependencies: stage, room code, player ID, isLoadedFromStorage (to ensure it runs after restoration)
-  }, [gameStage, currentRoomCode, playerId, isLoadedFromStorage, toast, playerName]); // Removed roomData to avoid re-triggering listener unnecessarily
+  }, [gameStage, currentRoomCode, playerId, isLoadedFromStorage, toast, playerName]); // Dependencies
 
 
   // --- Name Handling ---
   const handleNameSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmedName = tempPlayerName.trim(); // Use tempPlayerName from input
+    const trimmedName = tempPlayerName.trim();
     if (trimmedName && playerId) {
       setPlayerName(trimmedName); // Set the actual playerName state
       setGameStage('lobby');
       setGameMessage(`Welcome, ${trimmedName}! Create a game or join one.`);
-      // localStorage updates for playerName are handled by useEffect hook
     } else if (!trimmedName) {
       toast({
         title: "Invalid Name",
@@ -379,7 +354,7 @@ export default function GamePage() {
           attempts++;
           if (exists) {
               console.warn(`Room code ${newRoomCode} already exists. Attempt ${attempts}.`);
-              await new Promise(resolve => setTimeout(resolve, 50)); // Small delay before retrying
+              await new Promise(resolve => setTimeout(resolve, 50));
           }
       }
 
@@ -404,9 +379,7 @@ export default function GamePage() {
           players: [initialPlayerData],
           createdAt: Timestamp.now(),
           gameStarted: false,
-          // Initialize empty playerHands here using PlayerHands type
           playerHands: { [playerId]: [] },
-          // Initialize empty deck
           deck: [],
       };
 
@@ -414,15 +387,14 @@ export default function GamePage() {
           await setDoc(roomRef, initialRoomData);
           console.log(`Firestore document created for lobby ${newRoomCode} by host ${playerName} (${playerId}).`);
 
-          // Set local state AFTER successful Firestore write
-          setCurrentRoomCode(newRoomCode); // Triggers listener useEffect
-          setGameStage('gameLobby'); // Triggers listener + persistence useEffect
-          setHasCopied(false); // Reset copy state for new lobby
+          setCurrentRoomCode(newRoomCode);
+          setGameStage('gameLobby');
+          setHasCopied(false);
           toast({
               title: "Lobby Created!",
               description: `Room code: ${newRoomCode}`,
           });
-          // Message and isLoading=false will be handled by the Firestore listener
+          // Message and isLoading=false will be handled by the listener
 
       } catch (error) {
           console.error("Error writing initial room data to Firestore:", error);
@@ -436,9 +408,12 @@ export default function GamePage() {
           setCurrentRoomCode(null);
           setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
           setIsLoading(false); // Stop loading on failure
+          setIsCreating(false); // Stop creating spinner
       } finally {
-          setIsCreating(false); // Turn off specific creating spinner
-          // setIsLoading will be turned off by the listener or if creation failed
+           // We don't set isCreating to false here, because the listener will set isLoading to false
+           // which covers the general loading state. isCreating is mainly for the button spinner.
+          // If the try block completes successfully, the listener takes over isLoading.
+          // If the catch block runs, we explicitly set isLoading and isCreating to false.
       }
   };
 
@@ -482,12 +457,10 @@ export default function GamePage() {
             const playerIndex = currentRoomData.players.findIndex(p => p.id === playerId);
 
             if (playerIndex === -1) {
-                 // Check max players (optional, e.g., 4)
                  if (currentRoomData.players.length >= 4) {
                     throw new Error("Lobby is full");
                  }
                  const updatedPlayers = [...currentRoomData.players, joiningPlayer];
-                 // Initialize hand for the new player using PlayerHands type
                  const updatedPlayerHands: PlayerHands = { ...(currentRoomData.playerHands || {}), [playerId]: [] };
                  transaction.update(roomRef, {
                     players: updatedPlayers,
@@ -499,10 +472,9 @@ export default function GamePage() {
             }
         });
 
-        // Transaction successful OR player was already in room
-        setCurrentRoomCode(codeToJoin); // Triggers listener useEffect
-        setGameStage('gameLobby'); // Triggers listener + persistence useEffect
-        setJoinRoomCode(''); // Clear input field
+        setCurrentRoomCode(codeToJoin);
+        setGameStage('gameLobby');
+        setJoinRoomCode('');
         toast({
           title: "Joined Lobby!",
           description: `Successfully joined lobby ${codeToJoin}.`,
@@ -524,7 +496,6 @@ export default function GamePage() {
         description: description,
         variant: "destructive",
       });
-      // Reset state on failure
       setGameStage('lobby');
       setCurrentRoomCode(null);
       setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
@@ -562,7 +533,7 @@ export default function GamePage() {
                 const docSnap = await transaction.get(roomRef);
                 if (!docSnap.exists()) {
                     console.log(`Room ${roomCode} already deleted or not found while ${playerNameForLog} trying to leave. No backend action needed.`);
-                    return; // Exit transaction, nothing to update
+                    return;
                 }
 
                 const currentData = docSnap.data() as RoomData;
@@ -571,11 +542,9 @@ export default function GamePage() {
                 const leavingPlayerIndex = players.findIndex(p => p.id === playerIdToLeave);
 
                 if (isHostLeaving) {
-                    // Host leaving: Delete the room document entirely
                     console.log(`Host ${playerNameForLog} (${playerIdToLeave}) leaving, deleting room ${roomCode}.`);
                     transaction.delete(roomRef);
                 } else if (leavingPlayerIndex !== -1) {
-                    // Regular player leaving: Remove from players array and playerHands
                     const updatedPlayers = players.filter(p => p.id !== playerIdToLeave);
                     const updatedPlayerHands = { ...(currentData.playerHands || {}) };
                     delete updatedPlayerHands[playerIdToLeave]; // Remove hand data
@@ -586,12 +555,11 @@ export default function GamePage() {
                         playerHands: updatedPlayerHands
                     });
                 } else {
-                    // Player not found in the list (already left?)
                     console.log(`${playerNameForLog} (${playerIdToLeave}) was not found in the players list of room ${roomCode}. No backend update needed.`);
                 }
             });
             console.log(`Successfully processed leave action for ${playerNameForLog} in room ${roomCode}.`);
-            return true; // Indicate success
+            return true;
         } catch (error) {
             console.error(`Error performing leave transaction for ${playerNameForLog} in room ${roomCode}:`, error);
             toast({
@@ -599,7 +567,7 @@ export default function GamePage() {
                 description: "Could not update the room on the server. You have left locally.",
                 variant: "destructive",
             });
-            return false; // Indicate failure
+            return false;
         }
     };
 
@@ -612,20 +580,17 @@ export default function GamePage() {
       }
 
       setIsLeaving(true);
-      setIsLoading(true); // General loading indicator while leaving
+      setIsLoading(true);
       const leavingRoomCode = currentRoomCode;
       const leavingPlayerId = playerId;
       const leavingPlayerName = playerName;
-      const wasHost = roomData?.hostId === leavingPlayerId; // Check host status before resetting local data
+      const wasHost = roomData?.hostId === leavingPlayerId;
+      const previousStage = gameStage;
 
-      // 1. Optimistically update UI and local state
-      const previousStage = gameStage; // Remember if leaving from lobby or game
-      resetToLobby("Leaving room..."); // Resets stage, roomCode, roomData, listener, and sets message
+      resetToLobby("Leaving room...");
 
-      // 2. Perform backend update
       const success = await performLeaveTransaction(leavingRoomCode, leavingPlayerId, leavingPlayerName);
 
-      // 3. Show appropriate toast based on outcome and previous state
       if (success) {
           if (wasHost) {
                toast({
@@ -639,10 +604,8 @@ export default function GamePage() {
                });
           }
       }
-       // If !success, error toast is shown inside performLeaveTransaction
 
-      // 4. Update final message and ensure loading states are off
-      resetToLobby(); // Call again to set the final welcome message and ensure all loading is off
+      resetToLobby(); // Set final message and turn off loaders
     };
 
 
@@ -652,26 +615,18 @@ export default function GamePage() {
             toast({ title: "Action Denied", description: "Only the host can end the game.", variant: "destructive" });
             return;
         }
-        // Allow ending even if game hasn't started (cleans up lobby)
-        // if (!roomData.gameStarted) {
-        //      toast({ title: "Action Denied", description: "The game hasn't started yet.", variant: "destructive" });
-        //      return;
-        // }
 
         setIsEnding(true);
-        setIsLoading(true); // General loading indicator
+        setIsLoading(true);
         const endingRoomCode = currentRoomCode;
         const endingPlayerId = playerId;
         const endingPlayerName = playerName;
         console.log(`Host ${endingPlayerName} (${endingPlayerId}) initiating end game/close lobby for room ${endingRoomCode}.`);
 
-        // 1. Update backend: Delete the room document
         const roomRef = doc(db, 'rooms', endingRoomCode);
         try {
             await deleteDoc(roomRef);
             console.log(`Successfully deleted room ${endingRoomCode} by host action.`);
-
-            // 2. Update local state (similar to leaving)
             resetToLobby(`You closed room ${endingRoomCode}.`);
             toast({
                 title: roomData.gameStarted ? "Game Ended & Room Closed" : "Lobby Closed",
@@ -685,13 +640,10 @@ export default function GamePage() {
                 description: "Could not close the room on the server. Please try leaving manually.",
                 variant: "destructive",
             });
-            // Reset loading states even on error
              setIsEnding(false);
              setIsLoading(false);
-             // Keep the user in the game view locally, maybe show an error message
              setGameMessage(`Error ending game. Try leaving manually.`);
         }
-        // No finally block needed here as resetToLobby handles loading states on success
     };
 
 
@@ -699,8 +651,6 @@ export default function GamePage() {
     if (!currentRoomCode) return;
 
     try {
-        // Use Clipboard API - Requires HTTPS or localhost for security
-        // Check if navigator.clipboard is available (might not be in insecure contexts)
         if (!navigator.clipboard) {
              throw new Error("Clipboard API not available");
         }
@@ -710,11 +660,10 @@ export default function GamePage() {
             title: "Copied!",
             description: "Room code copied to clipboard.",
         });
-        setTimeout(() => setHasCopied(false), 2000); // Reset icon
+        setTimeout(() => setHasCopied(false), 2000);
     } catch (err: any) {
         console.error('Failed to copy room code:', err);
         let description = "Could not copy room code automatically. Please copy it manually.";
-        // Check if running in a secure context (HTTPS or localhost)
         if (typeof window !== 'undefined' && window.isSecureContext === false) {
             description = "Clipboard access requires a secure connection (HTTPS or localhost). Please copy the code manually.";
         } else if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
@@ -728,7 +677,7 @@ export default function GamePage() {
             description: description,
             variant: "destructive",
         });
-         setHasCopied(false); // Ensure button resets
+         setHasCopied(false);
     }
 }, [currentRoomCode, toast]);
 
@@ -748,65 +697,52 @@ export default function GamePage() {
            });
            return;
        }
-       // Optional: Add max player limit check if needed (e.g., 4)
-       // if (numPlayers > 4) { ... }
 
-       setIsStartingGame(true); // Use specific starting game spinner
-       setIsLoading(true); // General loading indicator
+       setIsStartingGame(true);
+       setIsLoading(true);
        setGameMessage("Starting game... Preparing deck and dealing cards...");
 
        const roomRef = doc(db, 'rooms', currentRoomCode);
        try {
-           // 1. Generate, Adjust, and Shuffle Deck
            const initialDeck = generateDeck();
            const adjustedDeck = adjustDeckForPlayers(initialDeck, numPlayers);
            const shuffledDeck = shuffleDeck(adjustedDeck);
 
-           // Calculate cards per player AFTER adjustment
            if (shuffledDeck.length % numPlayers !== 0) {
-                // This should not happen if adjustDeckForPlayers works correctly
                 throw new Error("Adjusted deck size is not divisible by the number of players.");
            }
            const cardsPerPlayer = shuffledDeck.length / numPlayers;
 
            console.log(`Starting game with ${numPlayers} players. Adjusted deck size: ${shuffledDeck.length}. Cards per player: ${cardsPerPlayer}`);
 
-           // 2. Deal Cards
            const dealtHands: PlayerHands = {};
-           // Get player IDs in the order they appear in the roomData.players array.
-           // This order should be consistent across clients thanks to Firestore.
            const playerIds = roomData.players.map(p => p.id);
 
            playerIds.forEach(pId => {
-               dealtHands[pId] = []; // Initialize empty hands
+               dealtHands[pId] = [];
            });
 
-           // Distribute cards one by one (simulating traditional dealing)
            for (let i = 0; i < shuffledDeck.length; i++) {
                const playerIndex = i % numPlayers;
                const currentPlayerId = playerIds[playerIndex];
                dealtHands[currentPlayerId].push(shuffledDeck[i]);
            }
 
-           // Verify hand sizes (optional sanity check)
            Object.values(dealtHands).forEach((hand, index) => {
                 if (hand.length !== cardsPerPlayer) {
                     console.warn(`Warning: Hand size mismatch for player ${playerIds[index]} after dealing. Expected ${cardsPerPlayer}, got ${hand.length}.`);
                 }
            });
 
-           // 3. Update Firestore with game state
            await updateDoc(roomRef, {
                gameStarted: true,
-               currentRound: 1, // Assuming game starts at round 1
-               deck: [], // Deck is now empty as all cards are dealt
-               playerHands: dealtHands, // Store the dealt hands
-               // ... other initial game state like scores, bids, trump etc. ...
+               currentRound: 1,
+               deck: [],
+               playerHands: dealtHands,
            });
 
            console.log(`Game started, cards dealt, and Firestore updated for room ${currentRoomCode} by host ${playerName} (${playerId})`);
-           // Listener will detect gameStarted: true and trigger UI transition.
-           // Listener will set isLoading=false
+           // Listener will detect gameStarted: true and trigger UI transition and set loading false.
 
        } catch (error: any) {
            console.error("Error starting game:", error);
@@ -819,19 +755,14 @@ export default function GamePage() {
            setIsLoading(false); // Stop loading only on error
            setIsStartingGame(false); // Turn off specific spinner on error
        } finally {
-          // Ensure starting spinner is off eventually, though listener might handle general loading
-           setIsStartingGame(false);
+           setIsStartingGame(false); // Ensure spinner is off eventually. Loading controlled by listener on success.
        }
    };
 
     // --- Full Reset Function ---
     const handleResetAndEnterName = () => {
-        // Leave room if currently in one (without clearing storage yet)
         if (currentRoomCode && playerId && playerName) {
-             // Using handleLeaveRoom will attempt backend update, which might be slow/unnecessary here.
-             // Just reset local state and clear storage.
              console.log("Resetting: Attempting to leave room (if any) and clearing local state/storage.");
-             // Attempt backend cleanup, but don't wait for it or block UI
              performLeaveTransaction(currentRoomCode, playerId, playerName).catch(err => {
                   console.warn("Error during background leave on reset:", err);
              });
@@ -839,7 +770,6 @@ export default function GamePage() {
              console.log("Resetting: Clearing local state and storage.");
         }
 
-        // Clear all relevant local storage
         if (typeof window !== 'undefined') {
             localStorage.removeItem(LS_PLAYER_NAME);
             localStorage.removeItem(LS_PLAYER_ID);
@@ -848,43 +778,41 @@ export default function GamePage() {
             console.log("Cleared all game state from localStorage.");
         }
 
-        // Detach listener if active
          if (unsubscribeRef.current) {
              console.log("Detaching listener during full reset.");
              unsubscribeRef.current();
              unsubscribeRef.current = null;
          }
 
-
-        // Reset local state variables
         setPlayerName('');
-        setTempPlayerName(''); // Reset temporary name input
-        setPlayerId(null); // Will trigger regeneration in initial useEffect
+        setTempPlayerName('');
+        setPlayerId(null); // This will trigger regeneration in initial useEffect
         setGameStage('enterName');
         setCurrentRoomCode(null);
         setRoomData(null);
         setGameMessage('Enter your name to start.');
-        setIsLoading(false); // Ensure loading is off
-        setIsLoadedFromStorage(false); // Reset storage loaded flag
+        setIsLoading(false);
+        setIsLoadedFromStorage(false);
         setIsCreating(false);
         setIsJoining(false);
         setIsLeaving(false);
         setIsEnding(false);
         setIsStartingGame(false);
 
-        // Regenerate player ID immediately if needed
-        if (typeof window !== 'undefined' && !localStorage.getItem(LS_PLAYER_ID)) {
-             const newPlayerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-             setPlayerId(newPlayerId);
-             localStorage.setItem(LS_PLAYER_ID, newPlayerId);
-             console.log("Regenerated new playerId after reset:", newPlayerId);
-        } else if (typeof window !== 'undefined') {
-             // If ID already existed, make sure our state reflects it
-             setPlayerId(localStorage.getItem(LS_PLAYER_ID));
+        if (typeof window !== 'undefined') {
+            const existingId = localStorage.getItem(LS_PLAYER_ID);
+            if (!existingId) {
+                const newPlayerId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                setPlayerId(newPlayerId);
+                localStorage.setItem(LS_PLAYER_ID, newPlayerId);
+                console.log("Regenerated new playerId after reset:", newPlayerId);
+            } else {
+                setPlayerId(existingId); // Restore existing ID if it wasn't cleared/is somehow still there
+            }
+             // Mark as loaded from storage after a short delay to allow state to settle
+             setTimeout(() => setIsLoadedFromStorage(true), 50);
         }
-        // Mark as loaded from storage again to allow persistence useEffects to run correctly after reset
-        // Need a slight delay to ensure state updates before re-enabling persistence
-        setTimeout(() => setIsLoadedFromStorage(true), 50);
+
     };
 
 
@@ -892,8 +820,8 @@ export default function GamePage() {
   // Combine all loading states that should disable user actions
   const isActionLoading = isCreating || isJoining || isLeaving || isEnding || isStartingGame || isLoading;
 
-  // Initial loading screen while restoring state or if hydration warning suppression is needed
-   if (!isLoadedFromStorage) { // Only show initial load screen before storage is checked
+  // Initial loading screen while restoring state
+   if (!isLoadedFromStorage) {
      return (
        <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
          <Loader2 className="h-16 w-16 animate-spin text-primary" />
@@ -946,10 +874,8 @@ export default function GamePage() {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
       <UICard className="w-full max-w-md shadow-2xl">
         <CardHeader>
-          {/* Display name might be loading briefly */}
           <CardTitle className="text-3xl font-bold text-primary text-center">Welcome, {playerName || '...'}!</CardTitle>
           <UICardDescription className="text-center text-muted-foreground pt-2 min-h-[20px]">
-             {/* Show general loading indicator if any major action is in progress */}
              {(isLoading || isCreating || isJoining) ? <Loader2 className="inline-block mr-2 h-4 w-4 animate-spin" /> : null}
              {gameMessage}
           </UICardDescription>
@@ -962,7 +888,6 @@ export default function GamePage() {
           <Dialog open={isJoinGameDialogOpen} onOpenChange={setIsJoinGameDialogOpen}>
             <DialogTrigger asChild>
               <Button className="w-full text-lg py-3" size="lg" variant="outline" disabled={isActionLoading}>
-                 {/* No spinner here, spinner shows on submit */}
                  <UserPlus className="mr-2" /> Join Game
               </Button>
             </DialogTrigger>
@@ -989,7 +914,7 @@ export default function GamePage() {
                     autoCapitalize="characters"
                     autoFocus
                     style={{ textTransform: 'uppercase' }}
-                    disabled={isJoining} // Disable only while the join request is active
+                    disabled={isJoining}
                   />
                 </div>
                 <DialogFooter>
@@ -1005,7 +930,6 @@ export default function GamePage() {
             </DialogContent>
           </Dialog>
 
-          {/* Change Name button - now uses the full reset */}
           <Button variant="link" size="sm" onClick={handleResetAndEnterName} disabled={isActionLoading}>
              Change Name / Reset
           </Button>
@@ -1014,172 +938,148 @@ export default function GamePage() {
     </div>
   );
 
-  const renderGameLobby = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
-      <UICard className="w-full max-w-lg shadow-2xl relative">
-        {currentRoomCode && (
-          <div className="absolute top-4 right-4 flex items-center space-x-2 z-10">
-            <Badge variant="secondary" className="text-lg px-3 py-1 font-mono tracking-widest">{currentRoomCode}</Badge>
-            <Button variant="ghost" size="icon" onClick={handleCopyToClipboard} className="h-8 w-8 text-muted-foreground hover:text-primary" disabled={isActionLoading || hasCopied} title="Copy Room Code">
-              {hasCopied ? <Check size={18} className="text-green-500" /> : <Copy size={18} />}
-              <span className="sr-only">Copy Room Code</span>
-            </Button>
-          </div>
-        )}
-        <CardHeader>
-          <CardTitle className="text-3xl font-bold text-primary text-center">Game Lobby</CardTitle>
-           <UICardDescription className="text-center text-muted-foreground pt-2 min-h-[20px]">
-             {/* Show loading if explicitly loading OR if roomData hasn't arrived yet and we expect it */}
-             {(isLoading && (!roomData || roomData.players.length === 0)) ? <Loader2 className="inline-block mr-2 h-4 w-4 animate-spin" /> : null}
-             {gameMessage}
-          </UICardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col space-y-6">
-          <div>
-            <h3 className="text-xl font-semibold text-secondary mb-3 text-center">Players ({roomData?.players?.length ?? 0} / 4)</h3> {/* Assuming max 4 */}
-            <div className="max-h-60 overflow-y-auto px-2 border rounded-md bg-muted/20 py-2">
-              <ul className="space-y-2 text-center">
-                {/* Show loading indicator inside list ONLY when loading AND no data */}
-                {isLoading && (!roomData || roomData.players.length === 0) ? (
-                    <li className="text-lg text-muted-foreground italic p-2"> <Loader2 className="inline-block mr-2 h-4 w-4 animate-spin" /> Loading players...</li>
-                ) : roomData?.players?.length ? (
-                  roomData.players.map((player) => (
-                    <li key={player.id} className="text-lg text-foreground p-2 bg-muted/30 rounded-md truncate flex items-center justify-center space-x-2">
-                       {player.id === roomData.hostId && <Crown size={18} className="text-accent inline-block" aria-label="Host"/>}
-                       <span>{player.name}</span>
-                       {playerId && player.id === playerId && <span className="text-primary font-semibold ml-1">(You)</span>}
-                    </li>
-                  ))
-                ) : (
-                   /* Show "Waiting..." only if not loading and no players */
-                   !isLoading && <li className="text-lg text-muted-foreground italic p-2">Waiting for players...</li>
-                )}
-                 {/* Placeholder slots */}
-                 {roomData && roomData.players.length < 4 && Array.from({ length: 4 - roomData.players.length }).map((_, i) => (
-                     <li key={`waiting-${i}`} className="text-lg text-muted-foreground italic p-2 bg-muted/10 rounded-md">
-                         Waiting for player...
-                     </li>
-                 ))}
-              </ul>
-            </div> {/* End player list container */}
-          </div>
+  const renderGameLobby = () => {
+     // Check if we should show the loading state more intelligently
+     const showLobbyLoading = isLoading && (!roomData || roomData.players.length === 0);
 
-          <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-4 pt-4">
-             {/* Start Game Button - Only visible to host */}
-             {playerId && roomData?.hostId === playerId && (
-              <Button
-                className="text-lg py-3 px-6 w-full sm:w-auto"
-                size="lg"
-                disabled={isActionLoading || (roomData?.players?.length ?? 0) < 2}
-                onClick={handleStartGame}
-                variant="secondary" // Give it a distinct look
-              >
-                {/* Show specific starting spinner */}
-                {isStartingGame ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Swords className="mr-2"/>}
-                Start Game
-              </Button>
-            )}
-            {/* Leave/End Button */}
-            {playerId && roomData?.hostId === playerId ? (
-                 // Host sees "End Lobby" button
-                 <Button
-                     onClick={handleEndGame} // Host action deletes the room
-                     className="text-lg py-3 px-6 w-full sm:w-auto"
-                     size="lg"
-                     variant="destructive" // More prominent for ending action
-                     disabled={isActionLoading} // Disable if any action is loading
-                 >
-                     {isEnding ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogOut className="mr-2" />}
-                     Close Lobby
-                 </Button>
-             ) : (
-                 // Non-hosts see "Leave Lobby" button
-                 <Button
-                     onClick={handleLeaveRoom} // Non-host action removes them from players
-                     className="text-lg py-3 px-6 w-full sm:w-auto"
-                     size="lg"
-                     variant="outline"
-                     disabled={isActionLoading} // Disable if any action is loading
-                 >
-                     {isLeaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogOut className="mr-2" />}
-                     Leave Lobby
-                 </Button>
-             )}
-          </div>
-        </CardContent>
-      </UICard>
-    </div>
-  );
+     return (
+         <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
+             <UICard className="w-full max-w-lg shadow-2xl relative">
+                 {currentRoomCode && (
+                     <div className="absolute top-4 right-4 flex items-center space-x-2 z-10">
+                         <Badge variant="secondary" className="text-lg px-3 py-1 font-mono tracking-widest">{currentRoomCode}</Badge>
+                         <Button variant="ghost" size="icon" onClick={handleCopyToClipboard} className="h-8 w-8 text-muted-foreground hover:text-primary" disabled={isActionLoading || hasCopied} title="Copy Room Code">
+                             {hasCopied ? <Check size={18} className="text-green-500" /> : <Copy size={18} />}
+                             <span className="sr-only">Copy Room Code</span>
+                         </Button>
+                     </div>
+                 )}
+                 <CardHeader>
+                     <CardTitle className="text-3xl font-bold text-primary text-center">Game Lobby</CardTitle>
+                     <UICardDescription className="text-center text-muted-foreground pt-2 min-h-[20px]">
+                         {showLobbyLoading ? <Loader2 className="inline-block mr-2 h-4 w-4 animate-spin" /> : null}
+                         {gameMessage}
+                     </UICardDescription>
+                 </CardHeader>
+                 <CardContent className="flex flex-col space-y-6">
+                     <div>
+                         <h3 className="text-xl font-semibold text-secondary mb-3 text-center">Players ({roomData?.players?.length ?? 0} / 4)</h3>
+                         <div className="max-h-60 overflow-y-auto px-2 border rounded-md bg-muted/20 py-2">
+                             <ul className="space-y-2 text-center">
+                                 {showLobbyLoading ? (
+                                     <li className="text-lg text-muted-foreground italic p-2"> <Loader2 className="inline-block mr-2 h-4 w-4 animate-spin" /> Loading players...</li>
+                                 ) : roomData?.players?.length ? (
+                                     roomData.players.map((player) => (
+                                         <li key={player.id} className="text-lg text-foreground p-2 bg-muted/30 rounded-md truncate flex items-center justify-center space-x-2">
+                                             {player.id === roomData.hostId && <Crown size={18} className="text-accent inline-block" aria-label="Host"/>}
+                                             <span>{player.name}</span>
+                                             {playerId && player.id === playerId && <span className="text-primary font-semibold ml-1">(You)</span>}
+                                         </li>
+                                     ))
+                                 ) : (
+                                     !isLoading && <li className="text-lg text-muted-foreground italic p-2">Waiting for players...</li>
+                                 )}
+                                 {roomData && roomData.players.length < 4 && Array.from({ length: 4 - roomData.players.length }).map((_, i) => (
+                                     <li key={`waiting-${i}`} className="text-lg text-muted-foreground italic p-2 bg-muted/10 rounded-md">
+                                         Waiting for player...
+                                     </li>
+                                 ))}
+                             </ul>
+                         </div>
+                     </div>
+
+                     <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-4 pt-4">
+                         {playerId && roomData?.hostId === playerId && (
+                             <Button
+                                 className="text-lg py-3 px-6 w-full sm:w-auto"
+                                 size="lg"
+                                 disabled={isActionLoading || (roomData?.players?.length ?? 0) < 2}
+                                 onClick={handleStartGame}
+                                 variant="secondary"
+                             >
+                                 {isStartingGame ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Swords className="mr-2"/>}
+                                 Start Game
+                             </Button>
+                         )}
+                         {playerId && roomData?.hostId === playerId ? (
+                             <Button
+                                 onClick={handleEndGame}
+                                 className="text-lg py-3 px-6 w-full sm:w-auto"
+                                 size="lg"
+                                 variant="destructive"
+                                 disabled={isActionLoading}
+                             >
+                                 {isEnding ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogOut className="mr-2" />}
+                                 Close Lobby
+                             </Button>
+                         ) : (
+                             <Button
+                                 onClick={handleLeaveRoom}
+                                 className="text-lg py-3 px-6 w-full sm:w-auto"
+                                 size="lg"
+                                 variant="outline"
+                                 disabled={isActionLoading}
+                             >
+                                 {isLeaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogOut className="mr-2" />}
+                                 Leave Lobby
+                             </Button>
+                         )}
+                     </div>
+                 </CardContent>
+             </UICard>
+         </div>
+     );
+   };
+
 
   // --- Game View ---
  const renderGame = () => {
-   if (!roomData || !playerId || !playerName) return null; // Should be handled by the switch, but safe check
+   if (!roomData || !playerId || !playerName) return null;
 
    const numPlayers = roomData.players.length;
-   // Ensure players array exists and has players before finding index
    const currentPlayerIndex = roomData.players?.findIndex(p => p.id === playerId) ?? -1;
    if (currentPlayerIndex === -1) {
-        // This case should ideally be caught by the listener redirecting to lobby
         console.error("Current player not found in game room data!");
-        // Force a redirect here as a fallback
         resetToLobby("Error: Not found in game.");
         return null;
    }
 
-
-   // --- Consistent Player Positioning ---
-   // We need a stable order. Use the order from roomData.players.
    const playerOrder = roomData.players.map(p => p.id);
-   const currentPlayerDisplayIndex = playerOrder.indexOf(playerId); // Index in the stable order
+   const currentPlayerDisplayIndex = playerOrder.indexOf(playerId);
 
    const getPlayerPosition = (playerDisplayIndex: number, totalPlayers: number, localPlayerDisplayIndex: number) => {
-       // Calculate the relative position index based on the local player being at the bottom (0)
        const relativeIndex = (playerDisplayIndex - localPlayerDisplayIndex + totalPlayers) % totalPlayers;
-
        const angleIncrement = 360 / totalPlayers;
-       // Angle 0 is top, 90 is right, 180 is bottom, 270 is left
-       // Start local player at 180 degrees (bottom)
-       let angle = 180 - (relativeIndex * angleIncrement);
+       let angle = 180 - (relativeIndex * angleIncrement); // Start local player at bottom (180 deg)
 
-       // Adjust angle slightly for better layout if needed (example: prevent overlap at top/bottom for 4 players)
-       if (totalPlayers === 4) {
-            if (relativeIndex === 0) angle = 180; // Bottom
-            else if (relativeIndex === 1) angle = 270; // Left
-            else if (relativeIndex === 2) angle = 0; // Top
-            else if (relativeIndex === 3) angle = 90; // Right
-       } else if (totalPlayers === 2) {
-           if (relativeIndex === 0) angle = 180; // Bottom
-           if (relativeIndex === 1) angle = 0;   // Top
-       } else if (totalPlayers === 3) {
-            if (relativeIndex === 0) angle = 180; // Bottom
-            else if (relativeIndex === 1) angle = 300; // Bottom-left approx
-            else if (relativeIndex === 2) angle = 60; // Bottom-right approx
-       }
-       // Add more cases for 5, 6 players if needed, or use the default calculation
+        // Angle adjustments for better layout for specific player counts
+        if (totalPlayers === 4) {
+            angle = [180, 270, 0, 90][relativeIndex]; // Bottom, Left, Top, Right
+        } else if (totalPlayers === 2) {
+            angle = [180, 0][relativeIndex]; // Bottom, Top
+        } else if (totalPlayers === 3) {
+            angle = [180, 300, 60][relativeIndex]; // Bottom, Bottom-Left-ish, Bottom-Right-ish
+        }
+       // Add more cases for 5, 6 players if needed
 
-       // Convert angle to radians for trig functions
        const angleRad = angle * (Math.PI / 180);
-
-       // Calculate position based on ellipse (adjust rx, ry for desired shape)
-       // Use percentages relative to the table container
        const rx = 40; // Horizontal radius percentage
        const ry = 35; // Vertical radius percentage
-       const x = 50 + rx * Math.cos(angleRad); // Center X + radius * cos(angle)
-       const y = 50 + ry * Math.sin(angleRad); // Center Y + radius * sin(angle)
+       const x = 50 + rx * Math.cos(angleRad);
+       const y = 50 + ry * Math.sin(angleRad);
 
        return {
            left: `${x}%`,
            top: `${y}%`,
-           transform: `translate(-50%, -50%)`, // Center the element
+           transform: `translate(-50%, -50%)`,
        };
    };
 
    const renderPlayerSeat = (player: Player, displayIndex: number) => {
      const positionStyle = getPlayerPosition(displayIndex, numPlayers, currentPlayerDisplayIndex);
      const isCurrentUser = player.id === playerId;
-     // Use PlayerHands type safely
      const playerHand = roomData.playerHands ? roomData.playerHands[player.id] : [];
-     const handSize = playerHand?.length ?? 0; // Get hand size
+     const handSize = playerHand?.length ?? 0;
 
      return (
        <div
@@ -1189,36 +1089,33 @@ export default function GamePage() {
        >
          <span className={`font-semibold truncate max-w-[100px] ${isCurrentUser ? 'text-primary-foreground' : 'text-card-foreground'}`}>
              {player.id === roomData.hostId && <Crown size={16} className="text-accent inline-block mr-1 mb-0.5" aria-label="Host"/>}
-             {player.name} {isCurrentUser ? '' : ''} {/* Removed (You) here, it's shown at bottom */}
+             {player.name}
          </span>
-         {/* Placeholder for cards - Render facedown for opponents */}
-         <div className="flex mt-1 space-x-[-35px] justify-center min-h-[60px] items-center px-1"> {/* Adjusted spacing */}
+         <div className="flex mt-1 space-x-[-35px] justify-center min-h-[60px] items-center px-1">
             {handSize > 0 ? (
-                // For opponents, show face-down cards based on their hand size
                 !isCurrentUser ? (
-                    // Limit displayed cards for opponents for visual clarity
                     Array.from({ length: Math.min(handSize, 7) }).map((_, cardIndex) => (
                        <CardComponent
                            key={`${player.id}-facedown-${cardIndex}`}
                            card={null}
                            isFaceDown={true}
-                           style={{ zIndex: cardIndex }} // Basic overlap effect
-                           className="w-12 h-18" // Slightly smaller cards for opponents
+                           style={{ zIndex: cardIndex }}
+                           className="w-12 h-18"
                        />
                     ))
                 ) : (
-                   // For current user, cards are shown in the bottom bar
-                   // Display hand size indicator for opponents if needed
+                    // Current user's hand is rendered at the bottom
                     <div className="text-xs text-muted-foreground italic mt-1">({handSize} cards)</div>
                 )
             ) : (
-                 // Show empty state if hand size is 0
                  <div className="text-xs text-muted-foreground italic mt-1">Empty Hand</div>
             )}
          </div>
        </div>
      );
    };
+
+   const currentUserHand = roomData.playerHands?.[playerId] ?? [];
 
    return (
      <div className="flex flex-col h-screen bg-gradient-to-br from-background to-card p-4 relative overflow-hidden">
@@ -1228,10 +1125,8 @@ export default function GamePage() {
            <div className="text-center">
                <h2 className="text-xl font-bold text-primary">Judgement</h2>
                <p className="text-sm text-muted-foreground">Round {roomData.currentRound ?? 'N/A'}</p>
-               {/* Add more info: Trump, Bids, Scores */}
            </div>
            <div className="space-x-2">
-             {/* Leave/End Game Button */}
               {playerId && roomData.hostId === playerId ? (
                   <Button variant="destructive" size="sm" onClick={handleEndGame} disabled={isActionLoading}>
                      {isEnding ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -1247,15 +1142,12 @@ export default function GamePage() {
        </div>
 
        {/* Game Table Area */}
-       <div className="flex-grow flex items-center justify-center mt-[70px] mb-[140px]"> {/* Increased bottom margin for hand */}
-         {/* Oval Table */}
+       <div className="flex-grow flex items-center justify-center mt-[70px] mb-[140px]">
          <div className="relative w-[85vw] h-[70vh] border-4 border-primary/50 rounded-[50%] bg-gradient-radial from-card via-card/80 to-transparent shadow-xl">
-           {/* Center Area for Deck/Played Cards */}
+           {/* Center Area */}
            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center space-y-2 z-10">
-                {/* Deck pile - Should be empty after dealing */}
                <div className="relative flex items-center justify-center w-18 h-26">
                    {roomData.deck && roomData.deck.length > 0 ? (
-                       // This shouldn't happen if dealing logic is correct
                        <>
                          <CardComponent card={null} isFaceDown={true} />
                          <Badge variant="secondary" className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs">
@@ -1265,51 +1157,44 @@ export default function GamePage() {
                    ) : (
                        <div className="w-16 h-24 border-2 border-dashed border-muted-foreground rounded flex items-center justify-center text-muted-foreground text-xs text-center px-1">Deck Empty</div>
                    )}
-
                </div>
-               {/* <span className="text-xs text-muted-foreground mt-1">Deck</span> */}
-               {/* TODO: Add area for played cards (trick pile) */}
            </div>
 
            {/* Player Seats */}
-           {/* Render players based on the consistent playerOrder */}
            {playerOrder.map((pId, index) => {
                 const player = roomData.players.find(p => p.id === pId);
-                if (!player) return null; // Should not happen
+                if (!player) return null;
                 return renderPlayerSeat(player, index);
            })}
 
          </div>
        </div>
 
-       {/* Current Player's Hand Area (fixed at bottom) */}
-       <div className="absolute bottom-0 left-0 right-0 p-4 bg-card/80 shadow-inner z-20 flex flex-col items-center h-[140px]"> {/* Fixed height */}
+       {/* Current Player's Hand Area */}
+       <div className="absolute bottom-0 left-0 right-0 p-4 bg-card/80 shadow-inner z-20 flex flex-col items-center h-[140px]">
           <span className="text-lg font-bold text-primary mb-2">{playerName} (You)</span>
-          <div className="flex space-x-[-45px] justify-center items-end h-[110px] w-full overflow-x-auto px-4"> {/* Adjusted spacing and added overflow */}
-              {roomData.playerHands && roomData.playerHands[playerId] && roomData.playerHands[playerId].length > 0 ? (
-                  roomData.playerHands[playerId]
-                     // Sort hand for better display (optional, but recommended)
+          <div className="flex space-x-[-45px] justify-center items-end h-[110px] w-full overflow-x-auto px-4">
+              {currentUserHand.length > 0 ? (
+                  currentUserHand
                     .sort((a, b) => {
                        const suitValA = suitOrder[a.suit];
                        const suitValB = suitOrder[b.suit];
-                       if (suitValA !== suitValB) return suitValA - suitValB; // Sort by suit first
-                       return rankOrder[a.rank] - rankOrder[b.rank]; // Then by rank
+                       if (suitValA !== suitValB) return suitValA - suitValB;
+                       return rankOrder[a.rank] - rankOrder[b.rank];
                     })
                     .map((card, index) => (
                       <CardComponent
-                         key={`my-card-${card.suit}-${card.rank}-${index}`} // Use card details for a more stable key
+                         key={`my-card-${card.suit}-${card.rank}-${index}`}
                          card={card}
                          isFaceDown={false}
                          style={{ zIndex: index }}
-                         className="hover:-translate-y-2 transition-transform duration-150 cursor-pointer flex-shrink-0" // Add shrink-0
-                         // onClick={() => handlePlayCard(card)} // TODO: Add play card logic
+                         className="hover:-translate-y-2 transition-transform duration-150 cursor-pointer flex-shrink-0"
                       />
                   ))
               ) : (
                   <div className="text-muted-foreground italic text-center w-full pt-8">Your hand is empty</div>
               )}
           </div>
-           {/* TODO: Add Bid/Play action buttons here */}
        </div>
      </div>
    );
@@ -1318,7 +1203,6 @@ export default function GamePage() {
 
   // --- Stage Switching Logic ---
 
-  // Handle initial loading state more cleanly
    if (!isLoadedFromStorage) {
      return (
        <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-background to-card p-8">
@@ -1330,57 +1214,45 @@ export default function GamePage() {
 
   switch (gameStage) {
     case 'enterName':
-      // If somehow name is already set, but stage is enterName, move to lobby
       if (playerName && playerId) {
           console.warn("In enterName stage but playerName exists, redirecting to lobby.");
-          // Ensure stage is actually changed (useEffect handles persistence)
           if (gameStage !== 'lobby') {
              setGameStage('lobby');
              setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
           }
-          // Render lobby directly if state update is synchronous enough, or return loading/null
-          return renderLobby(); // Assuming state updates reasonably quickly
+          return renderLobby();
       }
       return renderEnterName();
     case 'lobby':
-       // Ensure player name and ID are set before showing lobby
        if (!playerName || !playerId) {
            console.warn("Attempted to render lobby without name or ID. Redirecting to enterName.");
-           handleResetAndEnterName(); // Use the reset function to ensure clean state
-           return renderEnterName(); // Show enter name screen after reset
+           handleResetAndEnterName();
+           return renderEnterName();
        }
        return renderLobby();
     case 'gameLobby':
-       // Ensure core data is present for game lobby
         if (!playerName || !playerId || !currentRoomCode) {
             console.warn("Attempted to render gameLobby without necessary data. Redirecting to lobby.");
             resetToLobby(playerName ? `Welcome back, ${playerName}! Please rejoin or create a game.` : 'Please enter your name.');
-            // Render lobby immediately after reset
             return renderLobby();
         }
-       // Listener handles transition to 'game' and potential kick/redirect
        return renderGameLobby();
     case 'game':
-       // Ensure core data is present for game
-       if (!roomData || !currentRoomCode || !playerId || !playerName || !roomData.playerHands) { // Check playerHands too
+       if (!roomData || !currentRoomCode || !playerId || !playerName || !roomData.playerHands) {
            console.warn("Attempted to render game stage without necessary data. Redirecting to lobby.");
            resetToLobby(playerName ? `Welcome back, ${playerName}! Please rejoin or create a game.` : 'Please enter your name.');
-            // Render lobby immediately after reset
             return renderLobby();
        }
-       // Check if current player is actually part of this game room (using latest roomData)
        if (!roomData.players.some(p => p.id === playerId)) {
            console.warn(`Player ${playerId} (${playerName}) is not in room ${currentRoomCode}. Redirecting.`);
             toast({ title: "Not in Room", description: "You were removed or the game changed.", variant: "destructive"});
             resetToLobby(playerName ? `Welcome back, ${playerName}! Please rejoin or create a game.` : 'Please enter your name.');
-            // Render lobby immediately after reset
             return renderLobby();
        }
        return renderGame();
     default:
       console.error("Unrecognized game stage:", gameStage, "Resetting to enterName.");
       handleResetAndEnterName();
-      return renderEnterName(); // Show enter name after full reset
+      return renderEnterName();
   }
 }
-
