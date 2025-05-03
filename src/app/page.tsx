@@ -38,8 +38,8 @@ export default function GamePage() {
   const [gameStage, setGameStage] = useState<GameStage>('enterName');
   const [playerName, setPlayerName] = useState<string>('');
   const [joinRoomCode, setJoinRoomCode] = useState<string>('');
-  const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null); // For the host/creator
-  const [playersInLobby, setPlayersInLobby] = useState<string[]>([]);
+  const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null); // For the host/creator OR the room the player joined
+  const [playersInLobby, setPlayersInLobby] = useState<string[]>([]); // This state is LOCAL and NOT synchronized
   const [gameMessage, setGameMessage] = useState<string>('Enter your name to start.');
   const [isJoinGameDialogOpen, setIsJoinGameDialogOpen] = useState<boolean>(false);
   const [hasCopied, setHasCopied] = useState(false);
@@ -51,53 +51,69 @@ export default function GamePage() {
     e.preventDefault();
     const trimmedName = playerName.trim();
     if (trimmedName) {
-      setPlayerName(trimmedName); // Store the trimmed name
+      setPlayerName(trimmedName); // Store the trimmed name locally
       setGameStage('lobby');
       setGameMessage(`Welcome, ${trimmedName}! Create a game or join one.`);
     } else {
-      // Show error inline or use toast
       toast({
         title: "Invalid Name",
         description: "Please enter a valid name.",
         variant: "destructive",
       });
-      setGameMessage('Please enter a valid name.'); // Keep message for inline display too
+      setGameMessage('Please enter a valid name.');
     }
   };
 
   // --- Lobby Actions ---
   const handleCreateGame = () => {
     const newRoomCode = generateRoomCode();
-    console.log(`${playerName} is creating a game with code: ${newRoomCode}`);
+
+    // --- IMPORTANT: Real-time Synchronization Required ---
+    // In a real application, you would need a backend (like Firebase Realtime Database or Firestore)
+    // or a P2P connection (like WebRTC) to:
+    // 1. Register this new room (`newRoomCode`) and the host (`playerName`) on the backend/P2P network.
+    // 2. Set up listeners/subscriptions to receive updates when other players join/leave *this specific room*.
+    // The code below only sets the local state for the creator and does NOT synchronize with other browsers.
+    console.log(`${playerName} is creating game ${newRoomCode}. (Local state only)`);
+    // --- End Real-time Note ---
+
     setCreatedRoomCode(newRoomCode);
-    setPlayersInLobby([playerName]); // Creator is the first player
+    setPlayersInLobby([playerName]); // Creator is the first player *locally*
     setGameStage('gameLobby');
-    setGameMessage(`Lobby created. Share the code ${newRoomCode} with friends!`);
-    setHasCopied(false); // Reset copy status when creating a new game
+    setGameMessage(`Lobby created. Share code ${newRoomCode} to invite players!`);
+    setHasCopied(false); // Reset copy status
   };
 
   const handleJoinGameSubmit = (e: React.FormEvent) => {
       e.preventDefault();
-      const codeToJoin = joinRoomCode.trim().toUpperCase(); // Standardize input
+      const codeToJoin = joinRoomCode.trim().toUpperCase();
       if (codeToJoin) {
-          // Placeholder for joining game logic (needs backend/state management)
-          console.log(`${playerName} is attempting to join game with code: ${codeToJoin}`);
+          // --- IMPORTANT: Real-time Synchronization Required ---
+          // This section currently *simulates* joining a game lobby and DOES NOT connect to a real game.
+          // In a real application, you would need a backend or P2P connection to:
+          // 1. Validate `codeToJoin` against existing, active rooms.
+          // 2. If valid, fetch the actual list of players (including the host's name) already in that room's lobby.
+          // 3. Add the current `playerName` to the central lobby state (backend/notify peers).
+          // 4. Update the local `playersInLobby` state based on the *real* data received.
+          //
+          // The current code ONLY updates the local state for the joining player. It cannot
+          // see players who joined before, nor will the host or other players see this player join.
+          console.log(`${playerName} is attempting to join game with code: ${codeToJoin} (Simulation)`);
           setIsJoinGameDialogOpen(false); // Close dialog
 
-          // --- Simulation ---
-          // In a real app, you'd validate the code and fetch lobby state from a backend/P2P connection.
-          // For now, we simulate joining successfully.
-          setCreatedRoomCode(codeToJoin); // Assume we joined the room with this code (client-side only)
-          // Simulate fetching players - assume 'HostPlayer' created it
-          setPlayersInLobby(['HostPlayer', playerName]); // Simulate creator + joiner
+          // --- Simulation Logic (Client-side only) ---
+          setCreatedRoomCode(codeToJoin); // Store the joined room code locally for display
+          // Simulate fetching players - Replace 'Simulated Host' with actual host name in a real app.
+          const simulatedHostName = "Simulated Host"; // This is just a placeholder.
+          setPlayersInLobby([simulatedHostName, playerName]); // Update *local* player list for the joiner ONLY.
           setGameStage('gameLobby');
-          setGameMessage(`Joined game lobby ${codeToJoin}. Waiting for host to start...`);
+          setGameMessage(`Joined lobby ${codeToJoin}. Waiting for host... (Simulation)`);
           setJoinRoomCode(''); // Clear input field
           // --- End Simulation ---
 
           toast({
              title: "Joined Lobby (Simulated)",
-             description: `You've joined the lobby with code ${codeToJoin}.`,
+             description: `You've joined lobby ${codeToJoin}. Player list is simulated and not synchronized.`,
           });
 
       } else {
@@ -111,15 +127,22 @@ export default function GamePage() {
 
   // --- Game Lobby Actions ---
   const handleLeaveLobby = () => {
+    // --- IMPORTANT: Real-time Synchronization Required ---
+    // In a real app, you would need to:
+    // 1. Notify the backend/other peers that this player is leaving the specific `createdRoomCode`.
+    // 2. Update the lobby state on the backend/peers (remove the player).
+    // The code below only resets the local state and does not affect other players.
+    console.log(`${playerName} left the lobby ${createdRoomCode}. (Local state reset)`);
+    // --- End Real-time Note ---
+
     setGameStage('lobby');
-    setCreatedRoomCode(null); // Clear the room code as we left/it's no longer relevant
-    setPlayersInLobby([]); // Clear players
+    setCreatedRoomCode(null); // Clear the room code locally
+    setPlayersInLobby([]); // Clear local player list
     setGameMessage(`Welcome back, ${playerName}! Create a game or join one.`);
-    // In a real app, notify other players or backend
-    console.log(`${playerName} left the lobby.`);
   };
 
   const handleCopyToClipboard = useCallback(() => {
+    // This works locally as intended.
     if (createdRoomCode) {
       navigator.clipboard.writeText(createdRoomCode).then(() => {
         setHasCopied(true);
@@ -203,7 +226,7 @@ export default function GamePage() {
                <DialogHeader>
                  <DialogTitle className="text-primary">Join Game</DialogTitle>
                  <DialogDescription className="text-muted-foreground">
-                   Enter the room code provided by your friend to join their game.
+                   Enter the room code provided by your friend to join their game. (Simulation - no backend)
                  </DialogDescription>
                </DialogHeader>
                <form onSubmit={handleJoinGameSubmit} className="grid gap-4 py-4">
@@ -230,7 +253,7 @@ export default function GamePage() {
                         <Button type="button" variant="outline">Cancel</Button>
                      </DialogClose>
                      {/* Submit button to join the game */}
-                   <Button type="submit">Join Game</Button>
+                   <Button type="submit">Join Game (Simulated)</Button>
                  </DialogFooter>
                </form>
              </DialogContent>
@@ -243,6 +266,10 @@ export default function GamePage() {
 
         </CardContent>
       </UICard>
+      <div className="mt-4 p-4 bg-card/50 border border-border rounded-lg max-w-md text-center text-muted-foreground text-sm">
+        <p className="font-semibold text-secondary">Developer Note:</p>
+        <p>Game state (like player lists) is currently local to each browser tab. Multi-browser interaction requires a backend or P2P connection (e.g., Firebase, WebSockets, WebRTC).</p>
+      </div>
     </div>
   );
 
@@ -265,13 +292,14 @@ export default function GamePage() {
                 <CardTitle className="text-3xl font-bold text-primary text-center">Game Lobby</CardTitle>
                  {/* Display dynamic messages like 'Waiting for players...' */}
                 <UICardDescription className="text-center text-muted-foreground pt-2">{gameMessage}</UICardDescription>
+                 <p className="text-xs text-center text-secondary/80 pt-1">(Player list is local to this browser)</p>
             </CardHeader>
             <CardContent className="flex flex-col space-y-6">
                  <div>
-                     {/* Player List Section */}
+                     {/* Player List Section - Shows LOCAL state ONLY */}
                      <h3 className="text-xl font-semibold text-secondary mb-3 text-center">Players ({playersInLobby.length})</h3>
                      <ul className="space-y-2 text-center max-h-60 overflow-y-auto px-2"> {/* Added scroll for long player lists */}
-                         {/* Map through joined players and display their names */}
+                         {/* Map through locally known players */}
                          {playersInLobby.map((player, index) => (
                              <li key={index} className="text-lg text-foreground p-2 bg-muted/30 rounded-md truncate"> {/* Added truncate for long names */}
                                  {player}
@@ -291,7 +319,7 @@ export default function GamePage() {
                  {/* Action Buttons */}
                  <div className="flex justify-center space-x-4 pt-4">
                      {/* Start Game Button (Placeholder - Only Host should see/use) */}
-                     {/* Logic: Check if current player is the first player in the list (host) */}
+                     {/* Check if current player is the first player *in the local list* (host simulation) */}
                      {playersInLobby.length > 0 && playersInLobby[0] === playerName && (
                        <Button
                          className="text-lg py-3 px-6"
