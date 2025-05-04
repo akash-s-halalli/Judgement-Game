@@ -1,4 +1,3 @@
-
 // src/app/page.tsx
 'use client';
 
@@ -24,7 +23,7 @@ import { db } from '@/lib/firebase';
 import { collection, doc, setDoc, getDoc, updateDoc, arrayUnion, arrayRemove, onSnapshot, Timestamp, deleteDoc, where, query, getDocs, runTransaction } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 import { Card, PlayerHands, Suit, Rank, suitOrder, rankOrder, GamePhase } from '@/types/cards'; // Import card types and hand structure
-import { generateDeck, adjustDeckForInitialDeal, shuffleDeck, removeRandomCards } from '@/lib/game-logic'; // Import game logic functions
+import { generateDeck, adjustDeckForInitialDeal, shuffleDeck, removeRandomCards, removeCardsBetweenRounds, isValidLastPlayerBid, calculateScore } from '@/lib/game-logic'; // Import game logic functions
 import CardComponent from '@/components/CardComponent'; // Import CardComponent
 import { cn } from '@/lib/utils';
 
@@ -74,6 +73,7 @@ interface RoomData {
   trumpSuit?: Suit | null;
   remainingDeck?: Card[]; // Cards left in the deck for the *current* round deal
   playerHands?: PlayerHands; // Use the specific type for hands
+  deadDeck?: Card[]; // Cards removed from the deck for the *current* round deal
   // Add more game state properties later (e.g., trump suit changes)
 }
 
@@ -285,12 +285,70 @@ export default function GamePage() {
 
           // --- Kick out logic ---
           if (!currentPlayerInRoom && (screenStage === 'gameLobby' || screenStage === 'game')) {
-               console.warn(`Player ${playerId} no longer in room ${currentRoomCode}. Redirecting to lobby.`);
-               toast({ title: "Removed from Room", description: `You are no longer in room ${currentRoomCode}.`, variant: "destructive" });
-               resetToLobby(`Welcome back, ${playerName}! Create or join a game.`);
-               setIsLoading(false); // Ensure loading is off
-               cleanupListener();
-               return;
+              // Check if the game is still in progress
+              if (data.gameStarted) {
+                  // If game is in progress, try to rejoin
+                  const player: Player = { id: playerId, name: playerName };
+                  const updatedPlayers = [...data.players, player];
+                  const updatedPlayerOrder = [...data.playerOrder ?? [], playerId];
+                  const updatedPlayerHands = { ...(data.playerHands || {}), [playerId]: [] };
+                  const updatedScores = { ...(data.scores || {}), [playerId]: 0 };
+                  const updatedBids = { ...(data.bids || {}), [playerId]: null };
+                  const updatedTricksWon = { ...(data.tricksWon || {}), [playerId]: 0 };
+
+                  // Update the room with the rejoining player
+                  updateDoc(roomRef, {
+                      players: updatedPlayers,
+                      playerOrder: updatedPlayerOrder,
+                      playerHands: updatedPlayerHands,
+                      scores: updatedScores,
+                      bids: updatedBids,
+                      tricksWon: updatedTricksWon,
+                  }).then(() => {
+                      console.log(`Player ${playerName} rejoined game ${currentRoomCode}`);
+                      toast({
+                          title: "Rejoined Game",
+                          description: "Successfully rejoined the game in progress.",
+                          duration: 500
+                      });
+                  }).catch((error) => {
+                      console.error("Error rejoining game:", error);
+                      toast({
+                          title: "Rejoin Failed",
+                          description: "Could not rejoin the game. Please try again.",
+                          variant: "destructive",
+                          duration: 500
+                      });
+                      resetToLobby(`Welcome back, ${playerName}! Create or join a game.`);
+                  });
+              } else {
+                  // If game hasn't started, allow rejoining lobby
+                  const player: Player = { id: playerId, name: playerName };
+                  const updatedPlayers = [...data.players, player];
+                  const updatedPlayerOrder = [...data.playerOrder ?? [], playerId];
+
+                  updateDoc(roomRef, {
+                      players: updatedPlayers,
+                      playerOrder: updatedPlayerOrder,
+                  }).then(() => {
+                      console.log(`Player ${playerName} rejoined lobby ${currentRoomCode}`);
+                      toast({
+                          title: "Rejoined Lobby",
+                          description: "Successfully rejoined the lobby.",
+                          duration: 500
+                      });
+                  }).catch((error) => {
+                      console.error("Error rejoining lobby:", error);
+                      toast({
+                          title: "Rejoin Failed",
+                          description: "Could not rejoin the lobby. Please try again.",
+                          variant: "destructive",
+                          duration: 500
+                      });
+                      resetToLobby(`Welcome back, ${playerName}! Create or join a game.`);
+                  });
+              }
+              return;
           }
 
           // --- Screen Stage transitions based on gameStarted ---
@@ -399,7 +457,7 @@ export default function GamePage() {
     e.preventDefault();
     const trimmedName = tempPlayerName.trim();
     if (trimmedName && playerId) {
-      setPlayerName(trimmedName); // Set the actual playerName state
+      setPlayerName(trimmedName);
       setScreenStage('lobby');
       setGameMessage(`Welcome, ${trimmedName}! Create a game or join one.`);
     } else if (!trimmedName) {
@@ -407,6 +465,7 @@ export default function GamePage() {
         title: "Invalid Name",
         description: "Please enter a valid name.",
         variant: "destructive",
+        duration: 500
       });
       setGameMessage('Please enter a valid name.');
     } else {
@@ -414,6 +473,7 @@ export default function GamePage() {
            title: "Initialization",
            description: "Player ID not ready yet, please wait...",
            variant: "default",
+           duration: 500
          });
     }
   };
@@ -421,13 +481,18 @@ export default function GamePage() {
   // --- Lobby Actions ---
   const handleCreateGame = async () => {
       if (!playerName || !playerId) {
-           toast({ title: "Error", description: "Player name or ID is missing.", variant: "destructive" });
+           toast({ 
+             title: "Error", 
+             description: "Player name or ID is missing.", 
+             variant: "destructive",
+             duration: 500
+           });
            return;
       }
 
       setIsCreating(true);
       setGameMessage("Creating game lobby...");
-      setIsLoading(true); // Use general loading indicator
+      setIsLoading(true);
 
       let newRoomCode = '';
       let exists = true;
@@ -441,7 +506,7 @@ export default function GamePage() {
           attempts++;
           if (exists) {
               console.warn(`Room code ${newRoomCode} already exists. Attempt ${attempts}.`);
-              await new Promise(resolve => setTimeout(resolve, 50)); // Small delay before retrying
+              await new Promise(resolve => setTimeout(resolve, 50));
           }
       }
 
@@ -451,9 +516,10 @@ export default function GamePage() {
               title: "Creation Failed",
               description: "Could not create a unique lobby code. Please try again.",
               variant: "destructive",
+              duration: 500
           });
           setIsCreating(false);
-          setIsLoading(false); // Stop loading on failure
+          setIsLoading(false);
           setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
           return;
       }
@@ -490,6 +556,7 @@ export default function GamePage() {
           trumpSuit: Suit.Spades, // Default trump
           remainingDeck: [], // Will be set when game starts
           playerHands: { [playerId]: [] }, // Initialize host hand
+          deadDeck: [], // Initialize dead deck
       };
       // --- End Initial Room Data ---
 
@@ -529,7 +596,12 @@ export default function GamePage() {
   const handleJoinGameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!playerName || !playerId) {
-         toast({ title: "Error", description: "Player name or ID is missing.", variant: "destructive" });
+         toast({ 
+           title: "Error", 
+           description: "Player name or ID is missing.", 
+           variant: "destructive",
+           duration: 500
+         });
          return;
     }
 
@@ -745,10 +817,12 @@ export default function GamePage() {
     // --- Leave Lobby / Game Handler ---
     const handleLeaveRoom = async () => {
       if (!currentRoomCode || !playerId || !playerName) {
-          console.warn("Attempted to leave room without necessary info.");
-          // Maybe reset to lobby if state is clearly broken
-          if (!playerName) handleResetAndEnterName();
-          else if (!currentRoomCode) resetToLobby();
+          toast({ 
+            title: "Error", 
+            description: "Cannot leave room without necessary information.", 
+            variant: "destructive",
+            duration: 500
+          });
           return;
       }
 
@@ -798,7 +872,12 @@ export default function GamePage() {
      // --- Host End Game / Close Lobby Handler ---
     const handleEndGame = async () => {
         if (!currentRoomCode || !playerId || !roomData || roomData.hostId !== playerId) {
-            toast({ title: "Action Denied", description: "Only the host can end the game or close the lobby.", variant: "destructive" });
+            toast({ 
+              title: "Action Denied", 
+              description: "Only the host can end the game or close the lobby.", 
+              variant: "destructive",
+              duration: 500
+            });
             return;
         }
 
@@ -847,80 +926,43 @@ export default function GamePage() {
     if (!currentRoomCode) return;
 
     try {
-        // Use the navigator.clipboard API which is generally preferred
-        // Added check for `window.isSecureContext` because clipboard API requires a secure context (HTTPS or localhost)
-        if (!navigator.clipboard || typeof window === 'undefined' || !window.isSecureContext) {
-            // Fallback for older browsers, insecure contexts (like http), or SSR
-            console.warn("Clipboard API unavailable or insecure context. Using fallback.");
-            const textArea = document.createElement("textarea");
-            textArea.value = currentRoomCode;
-            textArea.style.position = "fixed"; // Prevent scrolling
-            textArea.style.left = "-9999px";
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try {
-                const successful = document.execCommand('copy');
-                if (!successful) throw new Error("Copy command failed");
-                setHasCopied(true);
-                toast({
-                    title: "Copied! (Fallback)",
-                    description: "Room code copied to clipboard.",
-                });
-                 setTimeout(() => setHasCopied(false), 2000);
-            } catch (err) {
-                 console.error('Fallback copy failed:', err);
-                 throw new Error("Fallback copy failed"); // Re-throw to be caught below
-            } finally {
-                document.body.removeChild(textArea);
-            }
-            return;
-        }
-        // --- End Fallback ---
-
-        // --- Preferred API ---
         await navigator.clipboard.writeText(currentRoomCode);
         setHasCopied(true);
         toast({
             title: "Copied!",
             description: "Room code copied to clipboard.",
+            duration: 500
         });
         setTimeout(() => setHasCopied(false), 2000);
-        // --- End Preferred API ---
-
-    } catch (err: any) {
-        console.error('Failed to copy room code:', err);
-        let description = "Could not copy room code automatically. Please copy it manually.";
-        // Specific error handling
-        if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
-            description = "Clipboard access denied by browser settings or policy. Please copy the code manually.";
-        } else if (err.message === "Fallback copy failed") {
-             description = "Failed to copy using fallback method. Please copy the code manually."
-        }
-
+    } catch (err) {
         toast({
             title: "Copy Failed",
-            description: description,
+            description: "Could not copy room code automatically. Please copy it manually.",
             variant: "destructive",
+            duration: 500
         });
-         setHasCopied(false); // Ensure button resets
     }
-}, [currentRoomCode, toast]);
+  }, [currentRoomCode]);
 
 
   // --- Game Logic ---
   const handleStartGame = async () => {
        if (!currentRoomCode || !roomData || !playerId || roomData.hostId !== playerId) {
-           toast({ title:"Action Denied", description: "Only the host can start the game.", variant: "destructive"});
+           toast({ 
+             title:"Action Denied", 
+             description: "Only the host can start the game.", 
+             variant: "destructive",
+             duration: 500
+           });
            return;
        }
        const numPlayers = roomData.players.length;
-       // Validate player count based on rules
        if (numPlayers < 3 || numPlayers > 6) {
            toast({
                title: "Cannot Start Game",
                description: `Judgement requires 3 to 6 players. You have ${numPlayers}.`,
                variant: "destructive",
+               duration: 500
            });
            return;
        }
@@ -933,19 +975,37 @@ export default function GamePage() {
        try {
            // --- Deck Preparation ---
            const initialDeck = generateDeck();
-           const adjustedDeck = adjustDeckForInitialDeal(initialDeck, numPlayers);
-           const shuffledDeck = shuffleDeck(adjustedDeck);
-           const cardsPerPlayer = shuffledDeck.length / numPlayers;
-
-           if (shuffledDeck.length % numPlayers !== 0) {
-                throw new Error(`Internal Error: Adjusted deck size (${shuffledDeck.length}) is not divisible by the number of players (${numPlayers}).`);
+           
+           // Calculate how many cards to remove to make it divisible by number of players
+           const cardsToRemove = initialDeck.length % numPlayers;
+           
+           // Remove cards in order (2 of clubs, 3 of clubs, etc.)
+           if (cardsToRemove > 0) {
+               const cardsToRemoveList = [];
+               for (let i = 2; i <= 2 + cardsToRemove - 1; i++) {
+                   cardsToRemoveList.push({ rank: i.toString(), suit: Suit.Clubs });
+               }
+               
+               // Remove the specified cards
+               for (const cardToRemove of cardsToRemoveList) {
+                   const index = initialDeck.findIndex(card => 
+                       card.rank === cardToRemove.rank && card.suit === cardToRemove.suit
+                   );
+                   if (index !== -1) {
+                       initialDeck.splice(index, 1);
+                   }
+               }
            }
+           
+           const shuffledDeck = shuffleDeck(initialDeck);
+           const cardsPerPlayer = Math.floor(shuffledDeck.length / numPlayers);
+
            console.log(`Starting game with ${numPlayers} players. Round 1 cards per player: ${cardsPerPlayer}. Deck size: ${shuffledDeck.length}`);
            // --- End Deck Preparation ---
 
            // --- Dealing Setup (Not Dealing Yet) ---
            const playerIds = roomData.players.map(p => p.id);
-           const shuffledPlayerOrder = shuffleDeck(playerIds);
+           const shuffledPlayerOrder = [...playerIds].sort(() => Math.random() - 0.5); // Simple shuffle for player order
            const startingPlayerIndex = 0; // First player in shuffled order starts dealing/bidding
            const initialPlayerHands: PlayerHands = {};
            playerIds.forEach(id => {
@@ -956,9 +1016,11 @@ export default function GamePage() {
            // --- Initialize Game State for Round 1 ---
            const initialBids: Bids = {};
            const initialTricksWon: { [playerId: string]: number } = {};
+           const initialScores: Scores = {};
            playerIds.forEach(id => {
                initialBids[id] = null; // No bids yet
                initialTricksWon[id] = 0; // No tricks won yet
+               initialScores[id] = 0; // Start with 0 points
            });
 
            // Update Firestore with initial game state (NO CARDS DEALT YET)
@@ -977,6 +1039,7 @@ export default function GamePage() {
                currentPlayerTurn: shuffledPlayerOrder[startingPlayerIndex], // First player's turn to DEAL
                bids: initialBids,
                tricksWon: initialTricksWon,
+               scores: initialScores,
                currentTrick: null,
            });
            // --- End Initialize Game State ---
@@ -994,8 +1057,6 @@ export default function GamePage() {
            setGameMessage(`Failed to start game. Waiting for players...`);
            setIsLoading(false); // Stop loading only on error
            setIsStartingGame(false); // Turn off specific spinner on error
-           // Optionally reset gameStarted field if update failed partially?
-           // await updateDoc(roomRef, { gameStarted: false }).catch(err => console.error("Failed to reset gameStarted field after start error:", err));
        } finally {
            // Ensure spinner is off eventually. Loading is controlled by listener on success.
            setIsStartingGame(false);
@@ -1005,7 +1066,12 @@ export default function GamePage() {
    // --- Handle Card Dealing ---
    const handleDealCards = async () => {
         if (!roomData || !playerId || roomData.currentPlayerTurn !== playerId || roomData.currentPhase !== 'dealing' || !currentRoomCode || !roomData.remainingDeck || roomData.cardsDealt) {
-            toast({ title: "Cannot Deal", description: "It's not your turn to deal, or cards are already dealt.", variant: "destructive" });
+            toast({ 
+              title: "Cannot Deal", 
+              description: "It's not your turn to deal, or cards are already dealt.", 
+              variant: "destructive",
+              duration: 500
+            });
             return;
         }
 
@@ -1073,45 +1139,54 @@ export default function GamePage() {
 
    const handleBidSubmit = async () => {
         if (!roomData || !playerId || roomData.currentPlayerTurn !== playerId || roomData.currentPhase !== 'bidding' || !currentRoomCode) {
-            toast({ title: "Not your turn", description: "Wait for your turn to bid.", variant: "destructive" });
+            toast({ 
+              title: "Not your turn", 
+              description: "Wait for your turn to bid.", 
+              variant: "destructive",
+              duration: 500
+            });
             return;
         }
         if (currentBid < 0 || currentBid > (roomData.currentRound ?? 0)) {
-            toast({ title: "Invalid Bid", description: `Bid must be between 0 and ${roomData.currentRound}.`, variant: "destructive"});
+            toast({ 
+                title: "Invalid Bid", 
+                description: `Bid must be between 0 and ${roomData.currentRound}.`, 
+                variant: "destructive",
+                duration: 500 // 0.5 seconds
+            });
             return;
+        }
+
+        // Check last player rule if applicable
+        const playerOrder = roomData.playerOrder!;
+        const biddingPlayerIndex = playerOrder.indexOf(playerId);
+        const isLastPlayer = biddingPlayerIndex === playerOrder.length - 1;
+        const cardsPerPlayer = roomData.currentRound!;
+        
+        if (isLastPlayer && cardsPerPlayer > 5) {
+            const bidsMadeSoFar = Object.values(roomData.bids ?? {}).filter(bid => bid !== null);
+            const currentTotalBids = bidsMadeSoFar.reduce((sum, bid) => sum + (bid ?? 0), 0);
+            const totalCards = cardsPerPlayer * playerOrder.length;
+            
+            if (!isValidLastPlayerBid(currentBid, currentTotalBids, totalCards, cardsPerPlayer)) {
+                toast({
+                    title: "Last Player Rule",
+                    description: `Your bid (${currentBid}) would make the total bids equal to the number of tricks (${totalCards}). Please choose a different bid.`,
+                    variant: "destructive",
+                    duration: 500 // 0.5 seconds
+                });
+                return;
+            }
         }
 
         setIsSubmittingBid(true);
         const roomRef = doc(db, 'rooms', currentRoomCode);
-        const playerOrder = roomData.playerOrder!;
-        const currentPlayerIndex = playerOrder.indexOf(playerId);
         const numPlayers = playerOrder.length;
         const currentRoundCards = roomData.currentRound!;
 
-        // --- Last Player Rule Check ---
-        const bidsMadeSoFar = Object.values(roomData.bids ?? {}).filter(bid => bid !== null);
-        const isLastPlayerToBid = bidsMadeSoFar.length === numPlayers - 1;
-
-        if (isLastPlayerToBid && currentRoundCards > 5) { // Rule applies only if > 5 cards per player
-            const currentTotalBids = bidsMadeSoFar.reduce((sum, bid) => sum + (bid ?? 0), 0);
-            const potentialTotal = currentTotalBids + currentBid;
-
-            if (potentialTotal === currentRoundCards) {
-                toast({
-                    title: "Last Player Rule",
-                    description: `Your bid (${currentBid}) would make the total bids equal to the number of tricks (${currentRoundCards}). Please choose a different bid.`,
-                    variant: "destructive"
-                });
-                setIsSubmittingBid(false);
-                return;
-            }
-        }
-        // --- End Last Player Rule Check ---
-
-
         try {
             // Determine next player index and phase
-            const nextPlayerIndex = (currentPlayerIndex + 1) % numPlayers;
+            const nextPlayerIndex = (biddingPlayerIndex + 1) % numPlayers;
             let nextPhase: GamePhase = 'bidding';
             let nextPlayerTurn: string | null = playerOrder[nextPlayerIndex];
 
@@ -1136,60 +1211,221 @@ export default function GamePage() {
             });
 
             console.log(`Player ${playerName} bid ${currentBid}. Next turn: ${nextPlayerTurn}. Phase: ${nextPhase}`);
-            toast({ title: "Bid Submitted", description: `You bid ${currentBid}.` });
+            toast({ 
+                title: "Bid Submitted", 
+                description: `You bid ${currentBid}.`,
+                duration: 500 // 0.5 seconds
+            });
             setCurrentBid(0); // Reset local bid input for next round
 
         } catch (error) {
             console.error("Error submitting bid:", error);
-            toast({ title: "Bid Error", description: "Could not submit your bid. Please try again.", variant: "destructive" });
+            toast({ 
+                title: "Bid Error", 
+                description: "Could not submit your bid. Please try again.", 
+                variant: "destructive",
+                duration: 500 // 0.5 seconds
+            });
         } finally {
             setIsSubmittingBid(false);
         }
    };
 
-   // --- Playing Logic (Placeholder/Basic Implementation) ---
+   // --- Playing Logic ---
    const handlePlayCard = async (cardToPlay: Card) => {
         if (!roomData || !playerId || roomData.currentPlayerTurn !== playerId || roomData.currentPhase !== 'playing' || !currentRoomCode) {
-            toast({ title: "Not your turn", description: "Wait for your turn to play.", variant: "destructive" });
+            toast({ 
+                title: "Not your turn", 
+                description: "Wait for your turn to play.", 
+                variant: "destructive",
+                duration: 500
+            });
             return;
         }
 
         const currentHand = roomData.playerHands?.[playerId];
         if (!currentHand || !currentHand.some(card => card.rank === cardToPlay.rank && card.suit === cardToPlay.suit)) {
-            toast({ title: "Invalid Card", description: "You don't have that card.", variant: "destructive" });
+            toast({ 
+                title: "Invalid Card", 
+                description: "You don't have that card.", 
+                variant: "destructive",
+                duration: 500
+            });
             return;
         }
 
-        // TODO: Add validation logic (must follow suit if possible)
+        // Validate following suit if possible
         const currentTrick = roomData.currentTrick;
         const leadingSuit = currentTrick?.leadingSuit;
-        if (leadingSuit && cardToPlay.suit !== leadingSuit) {
+        if (leadingSuit) {
+            // Check if player has cards of the leading suit
             const hasLeadingSuit = currentHand.some(card => card.suit === leadingSuit);
-            if (hasLeadingSuit) {
-                toast({ title: "Invalid Play", description: `You must follow the leading suit (${leadingSuit}).`, variant: "destructive" });
+            if (hasLeadingSuit && cardToPlay.suit !== leadingSuit) {
+                toast({ 
+                    title: "Invalid Play", 
+                    description: `You must follow the leading suit (${leadingSuit}).`, 
+                    variant: "destructive",
+                    duration: 500
+                });
                 return;
             }
         }
 
-        console.log(`Player ${playerName} playing card: ${cardToPlay.rank}${cardToPlay.suit}`);
-        // TODO: Implement the rest of the playing logic:
-        // 1. Update Firestore:
-        //    - Add card to currentTrick.cardsPlayed
-        //    - Set currentTrick.leadingSuit if it's the first card
-        //    - Remove card from playerHands[playerId]
-        //    - Determine the next player's turn
-        //    - If trick is complete:
-        //        - Determine trick winner
-        //        - Update tricksWon[winnerId]
-        //        - Set currentPlayerTurn to winner for next trick
-        //        - Clear currentTrick (or set winner and pause briefly)
-        //    - If round is complete (all tricks played):
-        //        - Transition to 'scoring' phase
-        //        - Calculate scores
-        //        - Prepare for next round (update roundNumber, currentRound, deal/remove cards logic, change trump if needed)
-        //        - Or transition to 'gameOver' if last round
-        toast({ title: "Card Played (WIP)", description: `${cardToPlay.rank}${cardToPlay.suit}` });
+        try {
+            const roomRef = doc(db, 'rooms', currentRoomCode);
+            const currentTrick = roomData.currentTrick || { leadingSuit: null, cardsPlayed: [], winner: null };
+            const updatedCardsPlayed = [...currentTrick.cardsPlayed, { playerId, card: cardToPlay }];
+            
+            // Determine if this is the first card of the trick
+            const isFirstCard = updatedCardsPlayed.length === 1;
+            
+            // Update player's hand by removing the played card
+            const updatedHand = currentHand.filter(card => 
+                !(card.rank === cardToPlay.rank && card.suit === cardToPlay.suit)
+            );
 
+            // Determine the next player
+            const currentPlayerIndex = roomData.playerOrder?.indexOf(playerId) ?? -1;
+            const nextPlayerIndex = (currentPlayerIndex + 1) % (roomData.playerOrder?.length ?? 0);
+            const nextPlayerId = roomData.playerOrder?.[nextPlayerIndex];
+
+            // Check if the trick is complete
+            const isTrickComplete = updatedCardsPlayed.length === (roomData.playerOrder?.length ?? 0);
+            
+            let updates: any = {
+                [`playerHands.${playerId}`]: updatedHand,
+                'currentTrick.cardsPlayed': updatedCardsPlayed,
+                'currentPlayerTurn': nextPlayerId
+            };
+
+            if (isFirstCard) {
+                updates['currentTrick.leadingSuit'] = cardToPlay.suit;
+            }
+
+            if (isTrickComplete) {
+                // Determine trick winner
+                const trumpSuit = roomData.trumpSuit ?? null;
+                const winningCard = determineTrickWinner(updatedCardsPlayed, trumpSuit, leadingSuit || cardToPlay.suit);
+                const winnerId = winningCard.playerId;
+
+                // Update scores and prepare for next trick
+                updates = {
+                    ...updates,
+                    'currentTrick.winner': winnerId,
+                    [`tricksWon.${winnerId}`]: (roomData.tricksWon?.[winnerId] || 0) + 1,
+                    'currentPlayerTurn': winnerId, // Winner starts next trick
+                    'currentTrick.cardsPlayed': [], // Clear played cards
+                    'currentTrick.leadingSuit': null // Reset leading suit
+                };
+
+                // Check if round is complete (all cards played)
+                const allHandsEmpty = Object.values(roomData.playerHands || {}).every(hand => {
+                    if (!hand) return true; // If hand is null/undefined, consider it empty
+                    return hand.length === 0;
+                });
+                
+                if (allHandsEmpty) {
+                    // Round is complete, calculate scores and prepare for next round
+                    const playerScores: Scores = {};
+                    const playerBids = roomData.bids || {};
+                    const playerTricksWon = roomData.tricksWon || {};
+
+                    // Calculate scores for each player
+                    Object.keys(playerBids).forEach(playerId => {
+                        const bid = playerBids[playerId] ?? 0;
+                        const tricksWon = playerTricksWon[playerId] ?? 0;
+                        const roundScore = calculateScore(bid, tricksWon);
+                        playerScores[playerId] = (roomData.scores?.[playerId] || 0) + roundScore;
+                    });
+
+                    // Remove cards for next round (number of cards equal to number of players)
+                    const numPlayers = roomData.players.length;
+                    const remainingDeck = [...(roomData.remainingDeck || [])];
+                    
+                    // Remove cards equal to number of players and add to dead deck
+                    const deadDeck = [...(roomData.deadDeck || [])];
+                    for (let i = 0; i < numPlayers; i++) {
+                        const randomIndex = Math.floor(Math.random() * remainingDeck.length);
+                        deadDeck.push(remainingDeck[randomIndex]);
+                        remainingDeck.splice(randomIndex, 1);
+                    }
+                    
+                    // Shuffle the remaining deck
+                    const shuffledDeck = shuffleDeck(remainingDeck);
+                    
+                    // Calculate cards per player for next round
+                    const cardsPerPlayer = Math.floor(shuffledDeck.length / numPlayers);
+                    
+                    // Update game state for next round
+                    await updateDoc(roomRef, {
+                        'currentPhase': 'dealing', // Change to dealing phase
+                        'scores': playerScores,
+                        'remainingDeck': shuffledDeck,
+                        'deadDeck': deadDeck, // Store removed cards in dead deck
+                        'roundNumber': (roomData.roundNumber || 0) + 1,
+                        'currentRound': cardsPerPlayer,
+                        'cardsDealt': false, // Cards are not dealt yet
+                        'playerHands': {}, // Clear all hands
+                        'bids': {}, // Reset bids
+                        'tricksWon': {}, // Reset tricks won
+                        'currentPlayerTurn': roomData.playerOrder?.[0], // First player deals first
+                        'currentTrick': null, // Reset current trick
+                        'trumpSuit': roomData.trumpSuit, // Keep the same trump suit
+                    });
+
+                    toast({ 
+                        title: "Round Complete", 
+                        description: "Scores updated. Next player to deal cards.",
+                        duration: 500
+                    });
+                }
+            }
+
+            await updateDoc(roomRef, updates);
+            toast({ 
+                title: "Card Played", 
+                description: `${cardToPlay.rank}${cardToPlay.suit}`,
+                duration: 500
+            });
+
+        } catch (error) {
+            console.error("Error playing card:", error);
+            toast({ 
+                title: "Error", 
+                description: "Failed to play card. Please try again.", 
+                variant: "destructive",
+                duration: 500
+            });
+        }
+   };
+
+   // Helper function to determine trick winner
+   const determineTrickWinner = (cardsPlayed: { playerId: string, card: Card }[], trumpSuit: Suit | null, leadingSuit: Suit): { playerId: string, card: Card } => {
+        let winningCard = cardsPlayed[0];
+        
+        for (let i = 1; i < cardsPlayed.length; i++) {
+            const currentCard = cardsPlayed[i];
+            
+            // If current card is trump and winning card is not, current card wins
+            if (currentCard.card.suit === trumpSuit && winningCard.card.suit !== trumpSuit) {
+                winningCard = currentCard;
+                continue;
+            }
+            
+            // If winning card is trump and current card is not, winning card stays
+            if (winningCard.card.suit === trumpSuit && currentCard.card.suit !== trumpSuit) {
+                continue;
+            }
+            
+            // If both cards are trump or both are not trump, compare ranks
+            if (currentCard.card.suit === winningCard.card.suit) {
+                if (rankOrder[currentCard.card.rank] > rankOrder[winningCard.card.rank]) {
+                    winningCard = currentCard;
+                }
+            }
+        }
+        
+        return winningCard;
    };
 
 
@@ -1666,7 +1902,7 @@ export default function GamePage() {
         if (currentPhase !== 'dealing' || !isMyTurn || cardsDealt) return null;
 
         return (
-            <div className="absolute bottom-[160px] left-1/2 transform -translate-x-1/2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
+            <div className="absolute top-[60px] right-2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
                 <h3 className="text-lg font-semibold text-primary">Your Turn to Deal</h3>
                  <Button onClick={handleDealCards} disabled={isDealing || isActionLoading} className="w-full">
                     {isDealing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Hand className="mr-2" />}
@@ -1683,7 +1919,7 @@ export default function GamePage() {
         const maxBid = roomData.currentRound ?? 0;
 
         return (
-            <div className="absolute bottom-[160px] left-1/2 transform -translate-x-1/2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
+            <div className="absolute top-[60px] right-2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
                 <h3 className="text-lg font-semibold text-primary">Your Bid</h3>
                 <div className="flex items-center space-x-4">
                     <Button variant="outline" size="icon" onClick={() => handleBidChange(-1)} disabled={currentBid <= 0 || isSubmittingBid}>
@@ -1703,16 +1939,15 @@ export default function GamePage() {
     };
     // --- End Render Bidding Interface ---
 
-    // --- Render Playing Interface (Placeholder) ---
+    // --- Render Playing Interface ---
     const renderPlayingInterface = () => {
         if (currentPhase !== 'playing') return null;
 
         return (
-            <div className="absolute bottom-[160px] left-1/2 transform -translate-x-1/2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
+            <div className="absolute top-[60px] right-2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
                  <h3 className="text-lg font-semibold text-primary">
                     {isMyTurn ? "Your Turn to Play" : `Waiting for ${currentTurnPlayerName}...`}
                  </h3>
-                 {/* Placeholder for card playing interaction */}
                  {isMyTurn && <p className="text-sm text-muted-foreground">(Click a card below to play)</p>}
             </div>
         );
@@ -1880,7 +2115,7 @@ export default function GamePage() {
         // If player name exists but we are in enterName stage, likely a refresh issue, move to lobby
       if (playerName && playerId) {
           // console.warn("In enterName stage but playerName exists, redirecting to lobby.");
-          if (screenStage !== 'lobby') { // Prevent infinite loop if already trying to set to lobby
+          if (screenStage === 'enterName') { // Only redirect if we're actually in enterName stage
              setScreenStage('lobby');
              setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
           }

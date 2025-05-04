@@ -1,4 +1,3 @@
-
 // src/lib/game-logic.ts
 
 import { Suit, Rank, Card, suitOrder, rankOrder } from '@/types/cards';
@@ -164,3 +163,61 @@ const rankDisplay: Record<Rank, string> = {
     [Rank.King]: 'K',
     [Rank.Ace]: 'A',
 };
+
+/**
+ * Removes the appropriate number of cards between rounds based on the number of players.
+ * Also checks if Spades have been completely removed to potentially change the trump suit.
+ * @param deck The current deck of cards
+ * @param numPlayers The number of players in the game
+ * @returns {Object} An object containing the adjusted deck and whether the trump suit changed
+ */
+export function removeCardsBetweenRounds(deck: Card[], numPlayers: number): { adjustedDeck: Card[], trumpChanged: boolean } {
+    if (numPlayers < 3 || numPlayers > 6) {
+        console.error("Invalid number of players. Must be between 3 and 6.");
+        return { adjustedDeck: deck, trumpChanged: false };
+    }
+
+    // Determine how many cards to remove based on number of players
+    const cardsToRemove = numPlayers;
+
+    // Remove the specified number of random cards
+    const adjustedDeck = removeRandomCards(deck, cardsToRemove);
+
+    // Check if all Spades have been removed
+    const hasSpades = adjustedDeck.some(card => card.suit === Suit.Spades);
+    const trumpChanged = !hasSpades;
+
+    return { adjustedDeck, trumpChanged };
+}
+
+/**
+ * Calculates the score for a player based on their bid and actual tricks won.
+ * @param bid The number of tricks the player bid
+ * @param tricksWon The actual number of tricks won
+ * @returns The score for this round
+ */
+export function calculateScore(bid: number, tricksWon: number): number {
+    if (bid === tricksWon) {
+        return 10 + tricksWon; // 10 points for exact match + 1 point per trick
+    }
+    return 0; // No points if bid doesn't match tricks won
+}
+
+/**
+ * Validates if a bid is allowed for the last player based on the last player rule.
+ * @param bid The bid to validate
+ * @param currentTotalBids The sum of all other players' bids
+ * @param totalCards The total number of cards in the round
+ * @param cardsPerPlayer The number of cards each player has
+ * @returns {boolean} True if the bid is valid, false otherwise
+ */
+export function isValidLastPlayerBid(bid: number, currentTotalBids: number, totalCards: number, cardsPerPlayer: number): boolean {
+    // Last player rule only applies when there are more than 5 cards per player
+    if (cardsPerPlayer <= 5) {
+        return true;
+    }
+
+    // Check if this bid would make the total equal to the number of cards
+    const potentialTotal = currentTotalBids + bid;
+    return potentialTotal !== totalCards;
+}
