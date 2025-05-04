@@ -1,3 +1,4 @@
+
 // src/app/page.tsx
 'use client';
 
@@ -7,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card as UICard, CardContent, CardHeader, CardTitle, CardDescription as UICardDescription } from '@/components/ui/card';
-import { Swords, UserPlus, LogOut, Copy, Check, Loader2, Crown, Minus, Plus, Target, Spade, Diamond } from 'lucide-react';
+import { Swords, UserPlus, LogOut, Copy, Check, Loader2, Crown, Minus, Plus, Target, Spade, Diamond, Hand } from 'lucide-react'; // Added Hand icon
 import {
   Dialog,
   DialogContent,
@@ -58,19 +59,20 @@ interface RoomData {
   players: Player[];
   createdAt: Timestamp;
   gameStarted?: boolean;
-  currentRound?: number | null; // Number of cards dealt this round
-  totalRounds?: number | null; // Initial number of cards dealt
+  currentRound?: number | null; // Number of cards to be dealt/in hand this round
+  totalRounds?: number | null; // Initial number of cards dealt (max tricks in round 1)
   roundNumber?: number | null; // Which round it is (1st, 2nd, etc.)
   currentPhase?: GamePhase | null;
-  currentPlayerTurn?: string | null; // Player ID whose turn it is (for bidding or playing)
+  cardsDealt?: boolean; // Flag indicating if cards for the current round have been dealt
+  currentPlayerTurn?: string | null; // Player ID whose turn it is (for dealing, bidding or playing)
   playerOrder?: string[]; // Fixed order for turns within a round
-  startingPlayerIndex?: number; // Index in playerOrder who starts the round/bidding
+  startingPlayerIndex?: number; // Index in playerOrder who starts the round/bidding/dealing
   bids?: Bids;
   scores?: Scores;
   tricksWon?: { [playerId: string]: number }; // Tricks won in the *current* round
   currentTrick?: CurrentTrick | null; // State of the current trick being played
   trumpSuit?: Suit | null;
-  remainingDeck?: Card[]; // Cards left in the deck for subsequent rounds
+  remainingDeck?: Card[]; // Cards left in the deck for the *current* round deal
   playerHands?: PlayerHands; // Use the specific type for hands
   // Add more game state properties later (e.g., trump suit changes)
 }
@@ -115,6 +117,7 @@ export default function GamePage() {
   const [isLeaving, setIsLeaving] = useState<boolean>(false); // Loading for leaving lobby/game
   const [isEnding, setIsEnding] = useState<boolean>(false); // Loading for host ending game
   const [isStartingGame, setIsStartingGame] = useState<boolean>(false); // Specific loading for starting game
+  const [isDealing, setIsDealing] = useState<boolean>(false); // Specific loading for dealing cards
   const [isLoadedFromStorage, setIsLoadedFromStorage] = useState<boolean>(false); // Flag for storage load
   const { toast } = useToast();
   const unsubscribeRef = useRef<Unsubscribe | null>(null);
@@ -126,7 +129,7 @@ export default function GamePage() {
 
   // Combine all loading states that should disable user actions
   // Note: Placed earlier because it's used in renderEnterName logic
-  const isActionLoading = isCreating || isJoining || isLeaving || isEnding || isStartingGame || isLoading || isSubmittingBid;
+  const isActionLoading = isCreating || isJoining || isLeaving || isEnding || isStartingGame || isLoading || isSubmittingBid || isDealing;
 
 
   // --- State Restoration from localStorage ---
@@ -318,6 +321,9 @@ export default function GamePage() {
                  const turnPlayerName = currentTurnPlayer ? currentTurnPlayer.name : 'Someone';
 
                  switch(data.currentPhase) {
+                      case 'dealing':
+                          phaseMessage += `${isMyTurn ? 'Your turn to deal cards.' : `Waiting for ${turnPlayerName} to deal.`}`;
+                          break;
                      case 'bidding':
                           phaseMessage += `Bidding phase. ${isMyTurn ? 'Your turn to bid.' : `Waiting for ${turnPlayerName} to bid.`}`;
                           break;
@@ -462,19 +468,21 @@ export default function GamePage() {
 
 
       // --- Initial Room Data ---
+      // We use null for Firestore compatibility where 'undefined' is not supported.
       const initialRoomData: RoomData = {
           hostId: playerId,
           hostName: playerName,
           players: [initialPlayerData],
           createdAt: Timestamp.now(),
           gameStarted: false,
-          currentRound: null, // Initialize as null, Firestore requires non-undefined values
-          totalRounds: null, // Initialize as null
-          roundNumber: null, // Initialize as null
-          currentPhase: null, // Initialize as null
-          currentPlayerTurn: null, // No turn initially
-          playerOrder: [playerId], // Start with just the host
-          startingPlayerIndex: 0, // Host starts first round bidding/play initially
+          currentRound: null,
+          totalRounds: null,
+          roundNumber: null,
+          currentPhase: null,
+          cardsDealt: false, // Explicitly false initially
+          currentPlayerTurn: null,
+          playerOrder: [playerId],
+          startingPlayerIndex: 0,
           bids: initialBids,
           scores: initialScores,
           tricksWon: initialTricksWon,
@@ -637,6 +645,7 @@ export default function GamePage() {
         setIsLeaving(false); // Ensure leaving state is off
         setIsEnding(false); // Ensure ending state is off
         setIsStartingGame(false); // Ensure starting game state is off
+        setIsDealing(false); // Ensure dealing state is off
         // localStorage updates are handled by useEffects for stage and room code
     };
 
@@ -918,51 +927,31 @@ export default function GamePage() {
 
        setIsStartingGame(true);
        setIsLoading(true);
-       setGameMessage("Starting game... Preparing deck and dealing cards...");
+       setGameMessage("Starting game... Preparing deck...");
 
        const roomRef = doc(db, 'rooms', currentRoomCode);
        try {
            // --- Deck Preparation ---
            const initialDeck = generateDeck();
-           // Adjust ONLY for the initial deal based on player count
            const adjustedDeck = adjustDeckForInitialDeal(initialDeck, numPlayers);
            const shuffledDeck = shuffleDeck(adjustedDeck);
            const cardsPerPlayer = shuffledDeck.length / numPlayers;
 
            if (shuffledDeck.length % numPlayers !== 0) {
-                // This should ideally not happen if adjustDeckForInitialDeal is correct
                 throw new Error(`Internal Error: Adjusted deck size (${shuffledDeck.length}) is not divisible by the number of players (${numPlayers}).`);
            }
-
            console.log(`Starting game with ${numPlayers} players. Round 1 cards per player: ${cardsPerPlayer}. Deck size: ${shuffledDeck.length}`);
            // --- End Deck Preparation ---
 
-           // --- Dealing Cards ---
-           const dealtHands: PlayerHands = {};
-           const playerIds = roomData.players.map(p => p.id); // Use existing players array
-
-           // Ensure playerOrder matches current players, shuffle for turn order? Rules say random start.
-           const shuffledPlayerOrder = shuffleDeck(playerIds); // Shuffle player IDs for turn order
-           const startingPlayerIndex = 0; // First player in shuffled order starts bidding/playing
-
-           playerIds.forEach(pId => {
-               dealtHands[pId] = []; // Initialize hands
+           // --- Dealing Setup (Not Dealing Yet) ---
+           const playerIds = roomData.players.map(p => p.id);
+           const shuffledPlayerOrder = shuffleDeck(playerIds);
+           const startingPlayerIndex = 0; // First player in shuffled order starts dealing/bidding
+           const initialPlayerHands: PlayerHands = {};
+           playerIds.forEach(id => {
+               initialPlayerHands[id] = []; // Initialize empty hands
            });
-
-           // Deal cards one by one (simulates real dealing)
-           for (let i = 0; i < shuffledDeck.length; i++) {
-               const playerIndex = i % numPlayers;
-               const currentPlayerId = playerIds[playerIndex]; // Deal based on original order
-               dealtHands[currentPlayerId].push(shuffledDeck[i]);
-           }
-
-           // Verify hand sizes (optional sanity check)
-           Object.values(dealtHands).forEach((hand, index) => {
-                if (hand.length !== cardsPerPlayer) {
-                    console.warn(`Warning: Hand size mismatch for player ${playerIds[index]} after dealing. Expected ${cardsPerPlayer}, got ${hand.length}.`);
-                }
-           });
-           // --- End Dealing Cards ---
+           // --- End Dealing Setup ---
 
            // --- Initialize Game State for Round 1 ---
            const initialBids: Bids = {};
@@ -972,28 +961,27 @@ export default function GamePage() {
                initialTricksWon[id] = 0; // No tricks won yet
            });
 
-           // Update Firestore with all initial game state
+           // Update Firestore with initial game state (NO CARDS DEALT YET)
            await updateDoc(roomRef, {
                gameStarted: true,
-               currentRound: cardsPerPlayer, // Number of cards in hand this round
-               totalRounds: cardsPerPlayer, // Initial number of cards dealt
-               roundNumber: 1, // Starting round 1
-               currentPhase: 'bidding', // Start with bidding phase
-               trumpSuit: Suit.Spades, // Default trump
-               playerHands: dealtHands,
-               remainingDeck: [], // Deck is fully dealt in the first round per rules
-               playerOrder: shuffledPlayerOrder, // Store the shuffled order for turns
+               currentRound: cardsPerPlayer, // Number of cards to be dealt
+               totalRounds: cardsPerPlayer, // Initial max tricks
+               roundNumber: 1,
+               currentPhase: 'dealing', // Start with dealing phase
+               cardsDealt: false, // Cards are NOT dealt yet
+               trumpSuit: Suit.Spades,
+               remainingDeck: shuffledDeck, // Store the full deck to be dealt
+               playerHands: initialPlayerHands, // Empty hands
+               playerOrder: shuffledPlayerOrder,
                startingPlayerIndex: startingPlayerIndex,
-               currentPlayerTurn: shuffledPlayerOrder[startingPlayerIndex], // First player's turn to bid
+               currentPlayerTurn: shuffledPlayerOrder[startingPlayerIndex], // First player's turn to DEAL
                bids: initialBids,
                tricksWon: initialTricksWon,
-               currentTrick: null, // No trick active yet
-               // Scores remain from lobby or are reset if needed (keeping existing scores for now)
-               // scores: initialScores, // Uncomment to reset scores to 0 on game start
+               currentTrick: null,
            });
            // --- End Initialize Game State ---
 
-           console.log(`Game started, cards dealt, turn order set, Firestore updated for room ${currentRoomCode} by host ${playerName} (${playerId})`);
+           console.log(`Game started, deck prepared, Firestore updated for room ${currentRoomCode}. Waiting for ${shuffledPlayerOrder[startingPlayerIndex]} to deal.`);
            // Listener will detect gameStarted: true, update local roomData, trigger UI transition, and set loading false.
 
        } catch (error: any) {
@@ -1012,6 +1000,67 @@ export default function GamePage() {
            // Ensure spinner is off eventually. Loading is controlled by listener on success.
            setIsStartingGame(false);
        }
+   };
+
+   // --- Handle Card Dealing ---
+   const handleDealCards = async () => {
+        if (!roomData || !playerId || roomData.currentPlayerTurn !== playerId || roomData.currentPhase !== 'dealing' || !currentRoomCode || !roomData.remainingDeck || roomData.cardsDealt) {
+            toast({ title: "Cannot Deal", description: "It's not your turn to deal, or cards are already dealt.", variant: "destructive" });
+            return;
+        }
+
+        setIsDealing(true);
+        const roomRef = doc(db, 'rooms', currentRoomCode);
+        const deckToDeal = roomData.remainingDeck!;
+        const numPlayers = roomData.players.length;
+        const cardsPerPlayer = roomData.currentRound!;
+        const playerIds = roomData.playerOrder!; // Use the established player order
+
+        if (deckToDeal.length !== cardsPerPlayer * numPlayers) {
+            toast({ title: "Deal Error", description: `Deck size (${deckToDeal.length}) mismatch for ${numPlayers} players needing ${cardsPerPlayer} cards each.`, variant: "destructive" });
+            setIsDealing(false);
+            return;
+        }
+
+        try {
+            const dealtHands: PlayerHands = {};
+            playerIds.forEach(pId => { dealtHands[pId] = []; });
+
+            // Simulate dealing card by card
+            const dealingDeck = [...deckToDeal]; // Work with a copy
+            for (let i = 0; i < dealingDeck.length; i++) {
+                const playerIndex = i % numPlayers;
+                const currentPlayerId = playerIds[playerIndex];
+                dealtHands[currentPlayerId]!.push(dealingDeck[i]);
+            }
+
+            // Verify hand sizes (optional sanity check)
+            Object.values(dealtHands).forEach((hand, index) => {
+                 if (hand && hand.length !== cardsPerPlayer) {
+                     console.warn(`Warning: Hand size mismatch for player ${playerIds[index]} after dealing. Expected ${cardsPerPlayer}, got ${hand.length}.`);
+                 }
+            });
+
+            // Determine next player (who starts bidding) - it's the same player who dealt in this logic, then we advance in bid submit
+            const nextPlayerTurn = playerIds[roomData.startingPlayerIndex ?? 0]; // The starting player also starts bidding
+
+            await updateDoc(roomRef, {
+                playerHands: dealtHands,
+                remainingDeck: [], // Deck is now empty for this round
+                cardsDealt: true, // Mark cards as dealt
+                currentPhase: 'bidding', // Transition to bidding phase
+                currentPlayerTurn: nextPlayerTurn, // Set bidding turn
+            });
+
+            console.log(`Player ${playerName} dealt ${cardsPerPlayer} cards each. Starting bidding phase. Turn: ${nextPlayerTurn}`);
+            toast({ title: "Cards Dealt", description: "Bidding phase begins." });
+
+        } catch (error) {
+            console.error("Error dealing cards:", error);
+            toast({ title: "Deal Error", description: "Could not deal cards. Please try again.", variant: "destructive" });
+        } finally {
+            setIsDealing(false);
+        }
    };
 
 
@@ -1040,13 +1089,11 @@ export default function GamePage() {
         const currentRoundCards = roomData.currentRound!;
 
         // --- Last Player Rule Check ---
-        const isLastPlayerToBid = (currentPlayerIndex + 1) % numPlayers === roomData.startingPlayerIndex!;
-        const bidsMade = Object.values(roomData.bids ?? {}).filter(bid => bid !== null).length;
-        const isActuallyLast = bidsMade === numPlayers -1; // Ensure this check matches reality
+        const bidsMadeSoFar = Object.values(roomData.bids ?? {}).filter(bid => bid !== null);
+        const isLastPlayerToBid = bidsMadeSoFar.length === numPlayers - 1;
 
-        if (isActuallyLast && currentRoundCards > 5) { // Rule applies only if > 5 cards per player
-            const currentTotalBids = Object.values(roomData.bids ?? {})
-                .reduce((sum, bid) => sum + (bid ?? 0), 0);
+        if (isLastPlayerToBid && currentRoundCards > 5) { // Rule applies only if > 5 cards per player
+            const currentTotalBids = bidsMadeSoFar.reduce((sum, bid) => sum + (bid ?? 0), 0);
             const potentialTotal = currentTotalBids + currentBid;
 
             if (potentialTotal === currentRoundCards) {
@@ -1068,7 +1115,7 @@ export default function GamePage() {
             let nextPhase: GamePhase = 'bidding';
             let nextPlayerTurn: string | null = playerOrder[nextPlayerIndex];
 
-            // If the next player to bid is the starting player, bidding is over
+            // If the next player to bid is the starting player again, bidding is over
             if (nextPlayerIndex === roomData.startingPlayerIndex) {
                 nextPhase = 'playing';
                 nextPlayerTurn = playerOrder[roomData.startingPlayerIndex!]; // Starting player leads the first trick
@@ -1099,6 +1146,52 @@ export default function GamePage() {
             setIsSubmittingBid(false);
         }
    };
+
+   // --- Playing Logic (Placeholder/Basic Implementation) ---
+   const handlePlayCard = async (cardToPlay: Card) => {
+        if (!roomData || !playerId || roomData.currentPlayerTurn !== playerId || roomData.currentPhase !== 'playing' || !currentRoomCode) {
+            toast({ title: "Not your turn", description: "Wait for your turn to play.", variant: "destructive" });
+            return;
+        }
+
+        const currentHand = roomData.playerHands?.[playerId];
+        if (!currentHand || !currentHand.some(card => card.rank === cardToPlay.rank && card.suit === cardToPlay.suit)) {
+            toast({ title: "Invalid Card", description: "You don't have that card.", variant: "destructive" });
+            return;
+        }
+
+        // TODO: Add validation logic (must follow suit if possible)
+        const currentTrick = roomData.currentTrick;
+        const leadingSuit = currentTrick?.leadingSuit;
+        if (leadingSuit && cardToPlay.suit !== leadingSuit) {
+            const hasLeadingSuit = currentHand.some(card => card.suit === leadingSuit);
+            if (hasLeadingSuit) {
+                toast({ title: "Invalid Play", description: `You must follow the leading suit (${leadingSuit}).`, variant: "destructive" });
+                return;
+            }
+        }
+
+        console.log(`Player ${playerName} playing card: ${cardToPlay.rank}${cardToPlay.suit}`);
+        // TODO: Implement the rest of the playing logic:
+        // 1. Update Firestore:
+        //    - Add card to currentTrick.cardsPlayed
+        //    - Set currentTrick.leadingSuit if it's the first card
+        //    - Remove card from playerHands[playerId]
+        //    - Determine the next player's turn
+        //    - If trick is complete:
+        //        - Determine trick winner
+        //        - Update tricksWon[winnerId]
+        //        - Set currentPlayerTurn to winner for next trick
+        //        - Clear currentTrick (or set winner and pause briefly)
+        //    - If round is complete (all tricks played):
+        //        - Transition to 'scoring' phase
+        //        - Calculate scores
+        //        - Prepare for next round (update roundNumber, currentRound, deal/remove cards logic, change trump if needed)
+        //        - Or transition to 'gameOver' if last round
+        toast({ title: "Card Played (WIP)", description: `${cardToPlay.rank}${cardToPlay.suit}` });
+
+   };
+
 
     // --- Full Reset Function ---
     const handleResetAndEnterName = () => {
@@ -1145,6 +1238,7 @@ export default function GamePage() {
         setIsEnding(false);
         setIsStartingGame(false);
         setIsSubmittingBid(false);
+        setIsDealing(false); // Reset dealing flag
 
         // Regenerate Player ID immediately after clearing
         if (typeof window !== 'undefined') {
@@ -1197,7 +1291,8 @@ export default function GamePage() {
                 disabled={!playerId || isActionLoading} // Disable if no player ID or action loading
               />
             </div>
-            <Button type="submit" className="w-full text-lg py-3" size="lg" disabled={isActionLoading || !tempPlayerName.trim() || !playerId}>
+             {/* Only enable button when name is entered */}
+             <Button type="submit" className="w-full text-lg py-3" size="lg" disabled={isActionLoading || !tempPlayerName.trim() || !playerId}>
                {(!playerId) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} {/* Show loader only if playerId isn't ready */}
               Enter Lobby
             </Button>
@@ -1401,7 +1496,7 @@ export default function GamePage() {
   // --- Render Game Screen ---
  const renderGame = () => {
    // --- Basic Data Checks ---
-   if (!roomData || !playerId || !playerName || !roomData.gameStarted || !roomData.playerHands || !roomData.playerOrder || roomData.startingPlayerIndex === undefined) {
+   if (!roomData || !playerId || !playerName || !roomData.gameStarted || !roomData.playerOrder || roomData.startingPlayerIndex === undefined) {
        // If essential game data is missing, show loading or error, then redirect
        console.warn("Attempted to render game stage without essential data. RoomData:", roomData);
         if (!isLoading) { // Avoid rapid redirects if just loading
@@ -1425,16 +1520,19 @@ export default function GamePage() {
    // --- Game State Variables ---
    const numPlayers = roomData.players.length;
    const playerOrder = roomData.playerOrder; // Guaranteed to exist by check above
-   const currentPlayerIndexInOrder = playerOrder.indexOf(playerId);
+   const currentPlayerId = playerId; // The ID of the player viewing the screen
+   const localPlayerIndexInOrder = playerOrder.indexOf(currentPlayerId);
    const currentTurnPlayerId = roomData.currentPlayerTurn;
    const isMyTurn = currentTurnPlayerId === playerId;
    const currentPhase = roomData.currentPhase;
    const cardsInHand = roomData.currentRound ?? 0;
    const trumpSuit = roomData.trumpSuit ?? Suit.Spades; // Default to Spades if undefined
-   const currentUserHand = roomData.playerHands?.[playerId] ?? [];
+   const currentUserHand = (roomData.playerHands && roomData.playerHands[playerId]) ?? []; // Get hand, default to empty array
    const bids = roomData.bids ?? {};
    const scores = roomData.scores ?? {};
    const tricksWon = roomData.tricksWon ?? {};
+   const cardsDealt = roomData.cardsDealt ?? false;
+   const deckSize = roomData.remainingDeck?.length ?? 0;
 
     // Find current turn player's name
     const currentTurnPlayer = roomData.players.find(p => p.id === currentTurnPlayerId);
@@ -1442,53 +1540,53 @@ export default function GamePage() {
 
 
    // --- Player Positioning Logic ---
-   const getPlayerPosition = (playerDisplayIndex: number, totalPlayers: number, localPlayerDisplayIndex: number) => {
-       const relativeIndex = (playerDisplayIndex - localPlayerDisplayIndex + totalPlayers) % totalPlayers;
-       // Simple top/bottom/left/right for 4 players, adjust for others
-       let positionStyle: React.CSSProperties = {};
-       const baseOffset = 45; // Adjust distance from center
+   const getPlayerPosition = (displayIndex: number, totalPlayers: number, localPlayerDisplayIndex: number) => {
+        // Calculate the relative index of the player being displayed compared to the local player
+        const relativeIndex = (displayIndex - localPlayerDisplayIndex + totalPlayers) % totalPlayers;
 
-       switch (totalPlayers) {
-           case 3: // Bottom, Top-Left, Top-Right
-               if (relativeIndex === 0) positionStyle = { bottom: `5%`, left: '50%', transform: 'translateX(-50%)' }; // Bottom Middle
-               else if (relativeIndex === 1) positionStyle = { top: `15%`, left: `15%`, transform: 'translate(-50%, -50%)' }; // Top Left
-               else positionStyle = { top: `15%`, right: `15%`, transform: 'translate(50%, -50%)' }; // Top Right
-               break;
-           case 4: // Bottom, Left, Top, Right
-               if (relativeIndex === 0) positionStyle = { bottom: `5%`, left: '50%', transform: 'translateX(-50%)' }; // Bottom Middle
-               else if (relativeIndex === 1) positionStyle = { top: '50%', left: `5%`, transform: 'translateY(-50%)' }; // Middle Left
-               else if (relativeIndex === 2) positionStyle = { top: `5%`, left: '50%', transform: 'translateX(-50%)' }; // Top Middle
-               else positionStyle = { top: '50%', right: `5%`, transform: 'translateY(-50%)' }; // Middle Right
-               break;
-           case 5: // Bottom, Mid-Left, Top-Left, Top-Right, Mid-Right
-                if (relativeIndex === 0) positionStyle = { bottom: `5%`, left: '50%', transform: 'translateX(-50%)' }; // Bottom
-                else if (relativeIndex === 1) positionStyle = { top: '60%', left: `5%`, transform: 'translateY(-50%)' }; // Mid Left
-                else if (relativeIndex === 2) positionStyle = { top: `10%`, left: `25%`, transform: 'translate(-50%, -50%)' };// Top Left
-                else if (relativeIndex === 3) positionStyle = { top: `10%`, right: `25%`, transform: 'translate(50%, -50%)' }; // Top Right
-                else positionStyle = { top: '60%', right: `5%`, transform: 'translateY(-50%)' }; // Mid Right
-                break;
-           case 6: // Bottom, Bot-Left, Top-Left, Top, Top-Right, Bot-Right
-                if (relativeIndex === 0) positionStyle = { bottom: `5%`, left: '50%', transform: 'translateX(-50%)' }; // Bottom
-                else if (relativeIndex === 1) positionStyle = { bottom: '25%', left: `10%`, transform: 'translate(-50%, 50%)' }; // Bottom Left
-                else if (relativeIndex === 2) positionStyle = { top: '25%', left: `10%`, transform: 'translate(-50%, -50%)' };// Top Left
-                else if (relativeIndex === 3) positionStyle = { top: `5%`, left: `50%`, transform: 'translateX(-50%)' }; // Top
-                else if (relativeIndex === 4) positionStyle = { top: '25%', right: `10%`, transform: 'translate(50%, -50%)' }; // Top Right
-                else positionStyle = { bottom: '25%', right: `10%`, transform: 'translate(50%, 50%)' }; // Bottom Right
-                break;
-           default: // Fallback for 2 players or others (less likely with rules)
-               if (relativeIndex === 0) positionStyle = { bottom: `5%`, left: '50%', transform: 'translateX(-50%)' };
-               else positionStyle = { top: `5%`, left: '50%', transform: 'translateX(-50%)' };
-       }
-       return positionStyle;
-   };
+        // Position calculation using angles on an oval
+        const angleDegrees = (relativeIndex / totalPlayers) * 360;
+        // Adjust angle so local player (relativeIndex 0) is at the bottom (270 degrees)
+        const adjustedAngle = (angleDegrees + 270) % 360;
+        const angleRadians = adjustedAngle * (Math.PI / 180);
+
+        // Define the oval's dimensions (relative to the center of the table area)
+        const horizontalRadius = 40; // Percentage of half-width
+        const verticalRadius = 35;   // Percentage of half-height
+
+        // Calculate position based on angle and radii
+        let leftPercent = 50 + horizontalRadius * Math.cos(angleRadians);
+        let topPercent = 50 + verticalRadius * Math.sin(angleRadians); // Y increases downwards
+
+        // Adjustments to prevent overlap with header/footer/center
+         if (adjustedAngle > 260 && adjustedAngle < 280) topPercent = 90; // Bottom player pushed down
+         else if (adjustedAngle > 80 && adjustedAngle < 100) topPercent = 10; // Top player pushed up
+         else if (topPercent > 85) topPercent = 85;
+         else if (topPercent < 15) topPercent = 15;
+
+         if (leftPercent > 85) leftPercent = 85;
+         else if (leftPercent < 15) leftPercent = 15;
+
+
+        // Apply transform to center the element at the calculated position
+        const transform = `translate(-50%, -50%)`;
+
+        return {
+            position: 'absolute',
+            left: `${leftPercent}%`,
+            top: `${topPercent}%`,
+            transform: transform,
+            zIndex: 10, // Ensure player cards are above the table background but potentially below modal popups
+        } as React.CSSProperties;
+    };
    // --- End Player Positioning Logic ---
 
    // --- Render Individual Player Seat ---
    const renderPlayerSeat = (player: Player, displayIndex: number) => {
-     const positionStyle = getPlayerPosition(displayIndex, numPlayers, currentPlayerIndexInOrder);
+     const positionStyle = getPlayerPosition(displayIndex, numPlayers, localPlayerIndexInOrder);
      const isCurrentUser = player.id === playerId;
      const isCurrentTurn = player.id === currentTurnPlayerId;
-     const playerHand = roomData.playerHands![player.id]; // Should exist
+     const playerHand = (roomData.playerHands && roomData.playerHands[player.id]) ?? []; // Default to empty array
      const handSize = playerHand?.length ?? 0;
      const playerBid = bids[player.id];
      const playerTricksWon = tricksWon[player.id] ?? 0;
@@ -1496,7 +1594,9 @@ export default function GamePage() {
 
      // Determine display content based on phase
      let statusDisplay = "";
-      if (currentPhase === 'bidding') {
+      if (currentPhase === 'dealing' && !cardsDealt) {
+           statusDisplay = isCurrentTurn ? "Dealing..." : "Waiting to deal";
+      } else if (currentPhase === 'bidding') {
           if (playerBid === null) {
               statusDisplay = isCurrentTurn ? "Bidding..." : "Waiting to bid";
           } else {
@@ -1523,7 +1623,7 @@ export default function GamePage() {
          <div className="flex items-center justify-center w-full mb-1">
              {player.id === roomData.hostId && <Crown size={16} className="text-accent inline-block mr-1 mb-0.5 flex-shrink-0" aria-label="Host"/>}
              <span className={`font-semibold truncate max-w-[100px] ${isCurrentUser ? 'text-primary-foreground' : 'text-card-foreground'}`} title={player.name}>
-                 {player.name}
+                 {player.name} {isCurrentUser ? '(You)' : ''}
              </span>
          </div>
 
@@ -1535,7 +1635,7 @@ export default function GamePage() {
 
 
          {/* Opponent Card Representation */}
-         {!isCurrentUser && (
+         {!isCurrentUser && cardsDealt && (
             <div className="flex mt-1 space-x-[-35px] justify-center min-h-[60px] items-center px-1">
                 {handSize > 0 ? (
                     // Show face-down cards for opponents
@@ -1549,17 +1649,33 @@ export default function GamePage() {
                        />
                     ))
                 ) : (
-                    currentPhase !== 'bidding' && <div className="text-xs text-muted-foreground italic mt-1">Empty Hand</div>
+                     currentPhase !== 'bidding' && currentPhase !== 'dealing' && <div className="text-xs text-muted-foreground italic mt-1">Empty Hand</div>
                 )}
             </div>
           )}
           {/* Current player's card count is shown near their hand */}
-          {isCurrentUser && currentPhase !== 'bidding' && <div className="text-xs text-muted-foreground italic mt-1">({handSize} cards)</div>}
+          {isCurrentUser && cardsDealt && currentPhase !== 'bidding' && currentPhase !== 'dealing' && <div className="text-xs text-muted-foreground italic mt-1">({handSize} cards)</div>}
 
        </div>
      );
    };
    // --- End Render Individual Player Seat ---
+
+   // --- Render Dealing Interface ---
+    const renderDealingInterface = () => {
+        if (currentPhase !== 'dealing' || !isMyTurn || cardsDealt) return null;
+
+        return (
+            <div className="absolute bottom-[160px] left-1/2 transform -translate-x-1/2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
+                <h3 className="text-lg font-semibold text-primary">Your Turn to Deal</h3>
+                 <Button onClick={handleDealCards} disabled={isDealing || isActionLoading} className="w-full">
+                    {isDealing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Hand className="mr-2" />}
+                     Deal Cards
+                 </Button>
+            </div>
+        );
+    };
+    // --- End Render Dealing Interface ---
 
    // --- Render Bidding Interface ---
     const renderBiddingInterface = () => {
@@ -1567,7 +1683,7 @@ export default function GamePage() {
         const maxBid = roomData.currentRound ?? 0;
 
         return (
-            <div className="absolute bottom-[150px] left-1/2 transform -translate-x-1/2 z-30 bg-card/90 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
+            <div className="absolute bottom-[160px] left-1/2 transform -translate-x-1/2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
                 <h3 className="text-lg font-semibold text-primary">Your Bid</h3>
                 <div className="flex items-center space-x-4">
                     <Button variant="outline" size="icon" onClick={() => handleBidChange(-1)} disabled={currentBid <= 0 || isSubmittingBid}>
@@ -1578,7 +1694,7 @@ export default function GamePage() {
                         <Plus size={18} />
                     </Button>
                 </div>
-                 <Button onClick={handleBidSubmit} disabled={isSubmittingBid} className="w-full">
+                 <Button onClick={handleBidSubmit} disabled={isSubmittingBid || isActionLoading} className="w-full">
                     {isSubmittingBid ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Target className="mr-2" />}
                      Submit Bid
                  </Button>
@@ -1590,9 +1706,9 @@ export default function GamePage() {
     // --- Render Playing Interface (Placeholder) ---
     const renderPlayingInterface = () => {
         if (currentPhase !== 'playing') return null;
-        // TODO: Add logic for selecting and playing cards
+
         return (
-            <div className="absolute bottom-[150px] left-1/2 transform -translate-x-1/2 z-30 bg-card/90 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
+            <div className="absolute bottom-[160px] left-1/2 transform -translate-x-1/2 z-40 bg-card/95 p-4 rounded-lg shadow-xl border border-primary flex flex-col items-center space-y-3">
                  <h3 className="text-lg font-semibold text-primary">
                     {isMyTurn ? "Your Turn to Play" : `Waiting for ${currentTurnPlayerName}...`}
                  </h3>
@@ -1607,7 +1723,7 @@ export default function GamePage() {
    return (
      <div className="flex flex-col h-screen bg-gradient-to-br from-background to-card p-4 relative overflow-hidden">
        {/* Game Info Header */}
-       <div className="absolute top-2 left-2 right-2 flex justify-between items-center z-20 p-2 bg-card/80 rounded-lg shadow">
+       <div className="absolute top-2 left-2 right-2 flex justify-between items-center z-50 p-2 bg-card/80 rounded-lg shadow">
            <div className="flex items-center space-x-2">
                 <Badge variant="secondary" className="hidden sm:inline-flex">Room: {currentRoomCode}</Badge>
                 <Badge variant="outline">Round: {roomData.roundNumber ?? 'N/A'} ({cardsInHand} cards)</Badge>
@@ -1635,8 +1751,8 @@ export default function GamePage() {
        {/* End Game Info Header */}
 
 
-       {/* Game Table Area */}
-       <div className="flex-grow flex items-center justify-center mt-[60px] mb-[140px] relative"> {/* Added relative positioning */}
+        {/* Game Table Area - Increase margin-bottom to accommodate taller hand area */}
+        <div className="flex-grow flex items-center justify-center mt-[60px] mb-[160px] relative"> {/* Increased mb */}
           {/* Player Seats */}
           {playerOrder.map((pId, index) => {
                 const player = roomData.players.find(p => p.id === pId);
@@ -1644,51 +1760,63 @@ export default function GamePage() {
                 return renderPlayerSeat(player, index);
            })}
 
-           {/* Center Area - Placed after players so it's potentially on top or controlled by z-index */}
-           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center space-y-2 z-10">
-                {/* Current Trick Display Area (Placeholder) */}
-                <div className="flex space-x-2 min-h-[100px] items-end">
-                   {/* TODO: Display cards played in the current trick */}
-                   {/* Example: */}
-                   {/* <CardComponent card={trickCard1} /> */}
-                   {/* <CardComponent card={trickCard2} /> */}
+           {/* Center Area - Deck and Current Trick */}
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center space-y-4 z-20">
+                {/* Current Trick Display Area */}
+                <div className="flex space-x-2 min-h-[100px] items-end p-2 bg-black/20 rounded-lg">
+                   {roomData.currentTrick && roomData.currentTrick.cardsPlayed.length > 0 ? (
+                        roomData.currentTrick.cardsPlayed.map(({ playerId: trickPlayerId, card }) => (
+                           <div key={`trick-${trickPlayerId}`} className="flex flex-col items-center">
+                                <CardComponent card={card} className="w-14 h-20" />
+                                {/* Optional: Show player name who played it */}
+                                {/* <span className="text-xs text-muted-foreground mt-1">{roomData.players.find(p => p.id === trickPlayerId)?.name}</span> */}
+                           </div>
+                        ))
+                   ) : (
+                       currentPhase === 'playing' && <div className="text-muted-foreground italic text-center w-full p-4">Waiting for first card...</div>
+                   )}
                 </div>
-                 {/* Deck Placeholder (only relevant if rules involved drawing) */}
-                 {/* <div className="relative flex items-center justify-center w-18 h-26">
-                     {roomData.remainingDeck && roomData.remainingDeck.length > 0 ? (
+
+                 {/* Deck Placeholder */}
+                 <div className="relative flex items-center justify-center w-18 h-26">
+                    {/* Show deck only before cards are dealt */}
+                     {!cardsDealt && deckSize > 0 ? (
                          <>
                            <CardComponent card={null} isFaceDown={true} />
-                           <Badge variant="secondary" className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs">
-                               {roomData.remainingDeck.length}
+                           <Badge variant="secondary" className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs z-10">
+                               {deckSize}
                            </Badge>
                          </>
                      ) : (
-                          currentPhase !== 'gameOver' && <div className="w-16 h-24 border-2 border-dashed border-muted-foreground rounded flex items-center justify-center text-muted-foreground text-xs text-center px-1">Deck Empty</div>
+                         cardsDealt && currentPhase !== 'gameOver' && <div className="w-16 h-24 border-2 border-dashed border-muted-foreground/50 rounded flex items-center justify-center text-muted-foreground text-xs text-center px-1 opacity-70">Deck Empty</div>
                      )}
-                 </div> */}
+                 </div>
            </div>
        </div>
         {/* End Game Table Area */}
 
-       {/* Phase-Specific UI (Bidding/Playing) */}
+       {/* Phase-Specific UI (Dealing/Bidding/Playing) - Adjusted bottom positioning */}
+       {renderDealingInterface()}
        {renderBiddingInterface()}
        {renderPlayingInterface()}
        {/* TODO: Add scoring overlay/display */}
 
 
-       {/* Current Player's Hand Area */}
-       <div className="absolute bottom-0 left-0 right-0 p-2 md:p-4 bg-card/80 shadow-inner z-20 flex flex-col items-center h-[140px]">
+        {/* Current Player's Hand Area - Increased height and adjusted z-index */}
+        <div className="absolute bottom-0 left-0 right-0 p-2 md:p-4 bg-card/90 shadow-inner z-30 flex flex-col items-center h-[160px]"> {/* Increased height */}
           {/* Player name and bid/tricks status */}
-          <div className='flex space-x-4 items-center mb-1'>
+          <div className='flex space-x-4 items-center mb-2'> {/* Increased margin-bottom */}
             <span className="text-lg font-bold text-primary">{playerName} (You)</span>
-            <span className='text-sm text-muted-foreground'>
-                 {currentPhase === 'bidding' && (bids[playerId] === null ? "Awaiting your bid..." : `Your Bid: ${bids[playerId]}`)}
-                 {(currentPhase === 'playing' || currentPhase === 'scoring') && `Bid: ${bids[playerId] ?? '-'} / Won: ${tricksWon[playerId] ?? 0}`}
-            </span>
+             {cardsDealt && (
+                 <span className='text-sm text-muted-foreground'>
+                    {currentPhase === 'bidding' && (bids[playerId] === null ? "Awaiting your bid..." : `Your Bid: ${bids[playerId]}`)}
+                    {(currentPhase === 'playing' || currentPhase === 'scoring') && `Bid: ${bids[playerId] ?? '-'} / Won: ${tricksWon[playerId] ?? 0}`}
+                 </span>
+             )}
           </div>
           {/* Hand Display */}
-          <div className="flex space-x-[-45px] justify-center items-end h-[110px] w-full overflow-x-auto px-4 pb-1">
-              {currentUserHand.length > 0 ? (
+          <div className="flex space-x-[-45px] justify-center items-end h-[120px] w-full overflow-x-auto px-4 pb-1"> {/* Increased height */}
+              {cardsDealt && currentUserHand.length > 0 ? (
                   currentUserHand
                     .sort((a, b) => { // Sort hand for consistent display
                        const suitValA = suitOrder[a.suit];
@@ -1701,23 +1829,29 @@ export default function GamePage() {
                          key={`my-card-${card.suit}-${card.rank}-${index}`}
                          card={card}
                          isFaceDown={false}
-                         style={{ zIndex: index }}
+                         style={{ zIndex: index }} // Ensure cards stack correctly visually
                          // Add onClick handler for playing phase
                          onClick={
                             (currentPhase === 'playing' && isMyTurn)
-                            ? () => { /* TODO: handlePlayCard(card) */ console.log("Play card:", card); }
+                            ? () => handlePlayCard(card) // Call handlePlayCard
                             : undefined
                          }
                          className={cn(
                             "hover:-translate-y-2 transition-transform duration-150 flex-shrink-0",
-                            (currentPhase === 'playing' && isMyTurn) ? "cursor-pointer" : "cursor-default" // Make clickable only during turn
-                            // TODO: Add visual indication for playable cards based on currentTrick.leadingSuit
+                             (currentPhase === 'playing' && isMyTurn) ? "cursor-pointer hover:shadow-lg hover:border-primary" : "cursor-default", // Make clickable only during turn
+                             // TODO: Add visual indication for playable cards based on currentTrick.leadingSuit
+                             // Example: !isValidMove(card) ? 'opacity-50 pointer-events-none' : ''
                          )}
                       />
                   ))
               ) : (
-                  currentPhase !== 'bidding' && <div className="text-muted-foreground italic text-center w-full pt-8">Your hand is empty</div>
+                  cardsDealt && currentPhase !== 'bidding' && <div className="text-muted-foreground italic text-center w-full pt-10">Your hand is empty</div>
               )}
+               {!cardsDealt && currentPhase !== 'gameOver' && (
+                    <div className="text-muted-foreground italic text-center w-full pt-10">
+                        {currentPhase === 'dealing' ? `Waiting for ${isMyTurn ? 'you' : currentTurnPlayerName} to deal...` : 'Waiting for cards...'}
+                    </div>
+               )}
           </div>
        </div>
        {/* End Current Player's Hand Area */}
@@ -1794,3 +1928,4 @@ export default function GamePage() {
       return renderEnterName();
   }
 } // End of GamePage component
+

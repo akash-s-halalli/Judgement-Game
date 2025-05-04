@@ -71,16 +71,18 @@ export const rankOrder: Record<Rank, number> = {
 
 /**
  * Represents the different phases of the game.
+ * dealing: Initial phase where cards are ready to be dealt by the starting player.
  */
-export type GamePhase = 'bidding' | 'playing' | 'scoring' | 'gameOver';
+export type GamePhase = 'dealing' | 'bidding' | 'playing' | 'scoring' | 'gameOver';
 
 
 /**
  * Represents player hands stored in Firestore, mapping player ID to an array of cards.
+ * Hands might be null or undefined during initialization or between rounds.
  */
-export interface PlayerHands {
-    [playerId: string]: Card[];
-}
+export type PlayerHands = {
+    [playerId: string]: Card[] | undefined | null;
+};
 
 // Note: PlayerHand interface was removed as PlayerHands map is more suitable for Firestore structure.
 // If needed locally for specific components, it can be redefined.
@@ -88,3 +90,4 @@ export interface PlayerHands {
 //   playerId: string;
 //   cards: Card[];
 // }
+
