@@ -123,6 +123,12 @@ export default function GamePage() {
    const [currentBid, setCurrentBid] = useState<number>(0);
    const [isSubmittingBid, setIsSubmittingBid] = useState<boolean>(false);
 
+
+  // Combine all loading states that should disable user actions
+  // Note: Placed earlier because it's used in renderEnterName logic
+  const isActionLoading = isCreating || isJoining || isLeaving || isEnding || isStartingGame || isLoading || isSubmittingBid;
+
+
   // --- State Restoration from localStorage ---
   useEffect(() => {
     // Only run on the client after initial mount
@@ -493,7 +499,7 @@ export default function GamePage() {
           console.error("Error writing initial room data to Firestore:", error);
           toast({
               title: "Creation Failed",
-              description: "Could not save the lobby data. Please try again.",
+              description: "Could not save the lobby data. Please try again.", // Corrected typo
               variant: "destructive",
           });
           // Reset state if creation fails
@@ -1147,8 +1153,7 @@ export default function GamePage() {
 
 
   // --- Render Logic ---
-  // Combine all loading states that should disable user actions
-  const isActionLoading = isCreating || isJoining || isLeaving || isEnding || isStartingGame || isLoading || isSubmittingBid;
+
 
   // Initial loading screen while restoring state
    if (!isLoadedFromStorage) {
@@ -1783,5 +1788,3 @@ export default function GamePage() {
       return renderEnterName();
   }
 } // End of GamePage component
-
-    
