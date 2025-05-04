@@ -24,6 +24,7 @@ export default function RootLayout({
   return (
     // This helps ignore hydration mismatches often caused by browser extensions
     <html lang="en" className="dark" suppressHydrationWarning={true}>
+      {/* Removed suppressHydrationWarning from body as it's already on html */}
       <body className={`antialiased bg-background text-foreground`}>
         {children}
         <Toaster /> {/* Add Toaster component */}

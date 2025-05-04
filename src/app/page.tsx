@@ -58,10 +58,10 @@ interface RoomData {
   players: Player[];
   createdAt: Timestamp;
   gameStarted?: boolean;
-  currentRound?: number; // Number of cards dealt this round
-  totalRounds?: number; // Initial number of cards dealt
-  roundNumber?: number; // Which round it is (1st, 2nd, etc.)
-  currentPhase?: GamePhase;
+  currentRound?: number | null; // Number of cards dealt this round
+  totalRounds?: number | null; // Initial number of cards dealt
+  roundNumber?: number | null; // Which round it is (1st, 2nd, etc.)
+  currentPhase?: GamePhase | null;
   currentPlayerTurn?: string | null; // Player ID whose turn it is (for bidding or playing)
   playerOrder?: string[]; // Fixed order for turns within a round
   startingPlayerIndex?: number; // Index in playerOrder who starts the round/bidding
@@ -69,7 +69,7 @@ interface RoomData {
   scores?: Scores;
   tricksWon?: { [playerId: string]: number }; // Tricks won in the *current* round
   currentTrick?: CurrentTrick | null; // State of the current trick being played
-  trumpSuit?: Suit;
+  trumpSuit?: Suit | null;
   remainingDeck?: Card[]; // Cards left in the deck for subsequent rounds
   playerHands?: PlayerHands; // Use the specific type for hands
   // Add more game state properties later (e.g., trump suit changes)
@@ -196,7 +196,7 @@ export default function GamePage() {
 
       // Set messages based on restored state
       if (currentStage === 'lobby' && savedPlayerName) {
-          setGameMessage(`Welcome back, ${savedPlayerName}! Create or join a game.`);
+          setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
       } else if ((currentStage === 'gameLobby' || currentStage === 'game') && savedRoomCode) {
           setGameMessage(`Reconnecting to ${currentStage === 'gameLobby' ? 'lobby' : 'game'} ${savedRoomCode}...`);
       } else {
@@ -385,6 +385,10 @@ export default function GamePage() {
 
 
   // --- Name Handling ---
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setTempPlayerName(e.target.value);
+  };
+
   const handleNameSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedName = tempPlayerName.trim();
@@ -464,10 +468,10 @@ export default function GamePage() {
           players: [initialPlayerData],
           createdAt: Timestamp.now(),
           gameStarted: false,
-          currentRound: undefined, // Will be set when game starts
-          totalRounds: undefined, // Will be set when game starts
-          roundNumber: undefined, // Will be set when game starts
-          currentPhase: undefined, // Will be set when game starts
+          currentRound: null, // Initialize as null, Firestore requires non-undefined values
+          totalRounds: null, // Initialize as null
+          roundNumber: null, // Initialize as null
+          currentPhase: null, // Initialize as null
           currentPlayerTurn: null, // No turn initially
           playerOrder: [playerId], // Start with just the host
           startingPlayerIndex: 0, // Host starts first round bidding/play initially
@@ -488,26 +492,28 @@ export default function GamePage() {
           setCurrentRoomCode(newRoomCode);
           setScreenStage('gameLobby');
           setHasCopied(false);
-          setIsCreating(false); // Turn off specific creating spinner
+          // Message and isLoading=false will be handled by the listener updating roomData
           toast({
               title: "Lobby Created!",
               description: `Room code: ${newRoomCode}`,
           });
-          // Message and isLoading=false will be handled by the listener updating roomData
 
-      } catch (error) {
+      } catch (error: any) {
           console.error("Error writing initial room data to Firestore:", error);
           toast({
               title: "Creation Failed",
-              description: "Could not save the lobby data. Please try again.", // Corrected typo
+              description: `Could not save the lobby data. ${error.message || 'Please try again.'}`,
               variant: "destructive",
           });
           // Reset state if creation fails
           setScreenStage('lobby');
           setCurrentRoomCode(null);
           setGameMessage(`Welcome back, ${playerName}! Create or join a game.`);
-          setIsLoading(false); // Stop loading on failure
-          setIsCreating(false); // Stop creating spinner
+          // setIsLoading(false); // Listener should handle this, but set explicitly on error
+      } finally {
+          // Ensure spinners are off regardless of success/failure
+          setIsCreating(false);
+          setIsLoading(false);
       }
   };
 
@@ -1017,7 +1023,7 @@ export default function GamePage() {
    };
 
    const handleBidSubmit = async () => {
-        if (!roomData || !playerId || roomData.currentPlayerTurn !== playerId || roomData.currentPhase !== 'bidding') {
+        if (!roomData || !playerId || roomData.currentPlayerTurn !== playerId || roomData.currentPhase !== 'bidding' || !currentRoomCode) {
             toast({ title: "Not your turn", description: "Wait for your turn to bid.", variant: "destructive" });
             return;
         }
@@ -1027,7 +1033,7 @@ export default function GamePage() {
         }
 
         setIsSubmittingBid(true);
-        const roomRef = doc(db, 'rooms', currentRoomCode!);
+        const roomRef = doc(db, 'rooms', currentRoomCode);
         const playerOrder = roomData.playerOrder!;
         const currentPlayerIndex = playerOrder.indexOf(playerId);
         const numPlayers = playerOrder.length;
@@ -1182,7 +1188,7 @@ export default function GamePage() {
                 id="playerName"
                 type="text"
                 value={tempPlayerName} // Bind to tempPlayerName
-                onChange={(e) => setTempPlayerName(e.target.value)} // Update tempPlayerName
+                onChange={handleNameChange} // Update tempPlayerName
                 placeholder="Your Name"
                 className="text-lg"
                 required
