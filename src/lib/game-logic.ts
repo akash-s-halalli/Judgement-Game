@@ -29,7 +29,7 @@ export function generateDeck(): Card[] {
       deck.push({ suit, rank });
     }
   }
-  console.log(`Generated deck with ${deck.length} cards.`);
+  // console.log(`Generated deck with ${deck.length} cards.`); // Reduced logging noise
   return deck;
 }
 
@@ -40,7 +40,9 @@ export function generateDeck(): Card[] {
  * @returns {Card[]} The sorted deck.
  */
 export function sortDeck(deck: Card[]): Card[] {
-  return deck.sort((a, b) => {
+  // Create a copy to avoid modifying the original array
+  const deckCopy = [...deck];
+  return deckCopy.sort((a, b) => {
     const rankComparison = rankOrder[a.rank] - rankOrder[b.rank];
     if (rankComparison !== 0) {
       return rankComparison; // Sort by rank first
@@ -51,35 +53,53 @@ export function sortDeck(deck: Card[]): Card[] {
 }
 
 /**
- * Adjusts the deck size to be perfectly divisible by the number of players
+ * Adjusts the deck size FOR THE INITIAL DEAL ONLY to be perfectly divisible by the number of players
  * by removing the lowest ranking cards first (starting from 2 of Clubs, then 2 of Hearts, etc.).
+ * This is typically only called once at the very start of the game.
+ * Subsequent round adjustments handle removal differently (randomly).
  * @param deck The initial deck of cards (assumed to be 52 cards).
  * @param numPlayers The number of players in the game.
- * @returns {Card[]} The adjusted deck.
+ * @returns {Card[]} The adjusted deck for the initial deal.
  */
-export function adjustDeckForPlayers(deck: Card[], numPlayers: number): Card[] {
+export function adjustDeckForInitialDeal(deck: Card[], numPlayers: number): Card[] {
   if (numPlayers <= 0) {
     console.error("Number of players must be positive.");
     return []; // Or throw an error
   }
+  if (numPlayers < 3 || numPlayers > 6) {
+    console.warn(`Game designed for 3-6 players. Current: ${numPlayers}. Proceeding, but deck adjustment might be unusual.`);
+  }
 
   const deckSize = deck.length;
-  const remainder = deckSize % numPlayers;
+  let cardsToRemove = 0;
 
-  if (remainder === 0) {
-    console.log(`Deck size ${deckSize} is divisible by ${numPlayers} players. No adjustment needed.`);
+  // Determine initial cards to remove based ONLY on making the deck divisible for the FIRST round
+  if (numPlayers === 5 && deckSize === 52) {
+      cardsToRemove = 2; // 52 -> 50 cards, 10 per player
+  } else if (numPlayers === 6 && deckSize === 52) {
+      cardsToRemove = 4; // 52 -> 48 cards, 8 per player
+  } else {
+      // For 3 or 4 players, 52 is already divisible for the first round (17 rem 1 for 3p, 13 for 4p)
+      // But the rules say deal 17 for 3p (needs 51) and 13 for 4p (needs 52).
+      // Let's adjust strictly based on the specified cards per player for the FIRST round.
+      if (numPlayers === 3 && deckSize === 52) cardsToRemove = 1; // 52 -> 51 cards, 17 per player
+      // No removal needed for 4 players (52 cards, 13 per player)
+  }
+
+
+  if (cardsToRemove === 0) {
+    console.log(`Initial Deal: Deck size ${deckSize} suitable for ${numPlayers} players. No initial removal needed.`);
     return deck; // No adjustment needed
   }
 
-  const cardsToRemove = remainder;
-  console.log(`Deck size ${deckSize} not divisible by ${numPlayers} players. Removing ${cardsToRemove} lowest cards.`);
+  console.log(`Initial Deal: Adjusting deck size ${deckSize} for ${numPlayers} players. Removing ${cardsToRemove} lowest cards.`);
 
   // Sort the deck to easily remove the lowest cards (2C, 2H, 2D, 2S, 3C, ...)
   const sortedDeck = sortDeck([...deck]); // Work on a copy
 
   // Remove the lowest 'cardsToRemove' cards from the beginning of the sorted array
   const adjustedDeck = sortedDeck.slice(cardsToRemove);
-  console.log(`Adjusted deck size: ${adjustedDeck.length}. Removed cards:`, sortedDeck.slice(0, cardsToRemove).map(c => `${c.rank}${c.suit}`).join(', '));
+  console.log(`Initial Deal: Adjusted deck size: ${adjustedDeck.length}. Removed cards:`, sortedDeck.slice(0, cardsToRemove).map(c => `${rankDisplay[c.rank]}${c.suit}`).join(', '));
 
   return adjustedDeck;
 }
@@ -90,15 +110,57 @@ export function adjustDeckForPlayers(deck: Card[], numPlayers: number): Card[] {
  * @returns {Card[]} The shuffled deck.
  */
 export function shuffleDeck(deck: Card[]): Card[] {
-  console.log(`Shuffling deck of size ${deck.length}...`);
+  // console.log(`Shuffling deck of size ${deck.length}...`); // Reduced logging noise
   const shuffledDeck = [...deck]; // Work on a copy
   for (let i = shuffledDeck.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffledDeck[i], shuffledDeck[j]] = [shuffledDeck[j], shuffledDeck[i]]; // Swap elements
   }
-  console.log("Deck shuffled.");
+  // console.log("Deck shuffled."); // Reduced logging noise
   return shuffledDeck;
 }
 
-// Add more game logic functions here as needed (e.g., dealing cards - Note: dealing logic moved to page.tsx)
 
+/**
+ * Removes a specified number of cards randomly from the deck.
+ * Used for adjustments between rounds.
+ * @param deck The current deck.
+ * @param count The number of cards to remove.
+ * @returns The deck with cards removed.
+ */
+export function removeRandomCards(deck: Card[], count: number): Card[] {
+  if (count <= 0) return deck;
+  if (count >= deck.length) return []; // Remove all cards
+
+  const deckCopy = [...deck];
+  const removedCards: Card[] = [];
+
+  console.log(`Removing ${count} random cards from deck of size ${deckCopy.length}.`);
+
+  for (let i = 0; i < count; i++) {
+    if (deckCopy.length === 0) break; // Should not happen if count < deck.length
+    const randomIndex = Math.floor(Math.random() * deckCopy.length);
+    removedCards.push(deckCopy.splice(randomIndex, 1)[0]);
+  }
+
+  console.log(`Removed random cards: ${removedCards.map(c => `${rankDisplay[c.rank]}${c.suit}`).join(', ')}. New deck size: ${deckCopy.length}`);
+  return deckCopy;
+}
+
+
+// Helper to get display string for ranks (e.g., 'T' -> '10')
+const rankDisplay: Record<Rank, string> = {
+    [Rank.Two]: '2',
+    [Rank.Three]: '3',
+    [Rank.Four]: '4',
+    [Rank.Five]: '5',
+    [Rank.Six]: '6',
+    [Rank.Seven]: '7',
+    [Rank.Eight]: '8',
+    [Rank.Nine]: '9',
+    [Rank.Ten]: '10',
+    [Rank.Jack]: 'J',
+    [Rank.Queen]: 'Q',
+    [Rank.King]: 'K',
+    [Rank.Ace]: 'A',
+};

@@ -70,8 +70,13 @@ export const rankOrder: Record<Rank, number> = {
 };
 
 /**
- * Represents a player's hand, mapping player ID to an array of cards.
- * This structure is used in Firestore.
+ * Represents the different phases of the game.
+ */
+export type GamePhase = 'bidding' | 'playing' | 'scoring' | 'gameOver';
+
+
+/**
+ * Represents player hands stored in Firestore, mapping player ID to an array of cards.
  */
 export interface PlayerHands {
     [playerId: string]: Card[];
